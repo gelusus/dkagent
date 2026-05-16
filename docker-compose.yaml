@@ -1,0 +1,49 @@
+services:
+  # ========================================================
+  # 场景 A: 持久化模式 (使用 named volume)
+  # 使用: docker compose run --rm agent-persistent
+  # 首次启动自动从镜像复制 home 目录内容到 volume，之后持久保留
+  # ========================================================
+  agent-persistent:
+    build: .
+    image: my-kali-agent
+    env_file:
+      - .env
+    volumes:
+      - kali-home:/home/kali
+    stdin_open: true
+    tty: true
+    command: /bin/zsh
+
+  # ========================================================
+  # 场景 B: 用完即焚模式 (使用镜像内默认配置)
+  # 使用: docker compose run --rm agent-ephemeral
+  # ========================================================
+  agent-ephemeral:
+    build: .
+    image: my-kali-agent
+    env_file:
+      - .env
+    stdin_open: true
+    tty: true
+    command: /bin/zsh
+
+  # ========================================================
+  # 场景 C: 安全执行模式 (只挂载 workspace，配置用完即焚)
+  # 使用: docker compose run --rm agent-safe
+  # 请先将文件复制到 ./workspace 再启动
+  # ========================================================
+  agent-safe:
+    build: .
+    image: my-kali-agent
+    env_file:
+      - .env
+    volumes:
+      - ./workspace:/home/kali/workspace
+    stdin_open: true
+    tty: true
+    command: /bin/zsh
+
+volumes:
+  kali-home:
+
