@@ -1,10 +1,11 @@
 services:
   # ========================================================
-  # 场景 A: 持久化模式 (使用 named volume)
-  # 使用: docker compose run --rm agent-persistent
-  # 首次启动自动从镜像复制 home 目录内容到 volume，之后持久保留
+  # 🏠 模式 A: 调试/Shell模式 (shell)
+  # 运行: docker compose run --rm agent-shell
+  # 安全: 🟢 隔离级别 - 不挂载任何宿主机工作目录
+  # 特点: 使用 named volume 持久化 /home/kali (保留工具配置和命令历史)
   # ========================================================
-  agent-persistent:
+  agent-shell:
     build: .
     image: my-kali-agent
     env_file:
@@ -16,10 +17,12 @@ services:
     command: /bin/zsh
 
   # ========================================================
-  # 场景 B: 用完即焚模式 (使用镜像内默认配置)
-  # 使用: docker compose run --rm agent-ephemeral
+  # 🧊 模式 B: 纯净/隔离模式 (isolated)
+  # 运行: docker compose run --rm agent-isolated
+  # 安全: 🟢 隔离级别 - 不挂载任何宿主机工作目录
+  # 特点: 无 any 挂载卷，纯净镜像环境，用完即焚
   # ========================================================
-  agent-ephemeral:
+  agent-isolated:
     build: .
     image: my-kali-agent
     env_file:
@@ -29,17 +32,20 @@ services:
     command: /bin/zsh
 
   # ========================================================
-  # 场景 C: 安全执行模式 (只挂载 workspace，配置用完即焚)
-  # 使用: docker compose run --rm agent-safe
-  # 请先将文件复制到 ./workspace 再启动
+  # 📂 模式 C: 沙盒副本模式 (sandboxed)
+  # 运行: docker compose run --rm agent-sandboxed
+  # 安全: 🟡 沙盒级别 - 只挂载 ./workspace 副本目录，保护原始项目文件
+  # 特点: 支持持久化 home 卷，且自动进入 /home/kali/workspace 目录
   # ========================================================
-  agent-safe:
+  agent-sandboxed:
     build: .
     image: my-kali-agent
     env_file:
       - .env
     volumes:
+      - kali-home:/home/kali
       - ./workspace:/home/kali/workspace
+    working_dir: /home/kali/workspace
     stdin_open: true
     tty: true
     command: /bin/zsh

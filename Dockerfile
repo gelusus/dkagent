@@ -42,8 +42,9 @@ RUN FD_TAG=$(curl -fsSL https://api.github.com/repos/sharkdp/fd/releases/latest 
 # 安装各类 AI Agent CLI
 RUN sudo npm install -g @openai/codex && \
     curl -fsSL https://claude.ai/install.sh | bash && \
-    sudo npm install -g @mariozechner/pi-coding-agent && \
-    sudo npm install -g @google/gemini-cli
+    sudo npm install -g @earendil-works/pi-coding-agent && \
+    sudo npm install -g @google/gemini-cli && \
+    sudo npm install -g opencode-ai@latest
 ENV PATH="/home/kali/.local/bin:${PATH}"
 
 WORKDIR /home/kali
