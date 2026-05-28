@@ -3,12 +3,14 @@
 # dkagent - AI Agent Docker 统一运行入口
 #
 # 用法:
-#   dkagent                      # 默认模式：持久化 home + 挂载当前目录，进入 zsh
-#   dkagent claude               # 启动并直接运行 claude
-#   dkagent -e claude            # 🧊 临时/干净模式 + 直接运行 claude
-#   dkagent -m ./project claude  # 🟡 沙盒模式，挂载指定目录的副本并运行
-#   dkagent --no-mount           # 🟢 纯配置管理模式，不挂载任何工作目录
-#   dkagent --help               # 查看详细帮助及安全指南
+#   dkagent                           # 默认模式：持久化 home + 挂载当前目录，进入 zsh
+#   dkagent claude                    # 启动并直接运行 claude
+#   dkagent -e claude                 # 🧊 临时/干净模式 + 直接运行 claude
+#   dkagent -m ./project claude       # 🟡 沙盒模式，挂载指定目录并运行
+#   dkagent -m "./a ./b" claude       # 🟠 多目录挂载（全部可写），启动 Claude
+#   dkagent -m "./a ./b" -r -r claude # 🟡 多目录只读挂载，启动 Claude
+#   dkagent --no-mount                # 🟢 纯配置管理模式，不挂载任何工作目录
+#   dkagent --help                    # 查看详细帮助及安全指南
 #
 
 set -euo pipefail
@@ -44,28 +46,33 @@ Agent 名称:
 
 选项:
   -e, --ephemeral        🧊 使用临时 home 目录（不保留任何配置或历史记录，防注入更安全）
-  -m, --mount DIR        📁 挂载指定的工作目录，而非当前目录（配合副本实现沙盒隔离）
+  -m, --mount DIR        📁 挂载指定目录到 /home/kali/workspace/<目录名>
+                         支持多次指定: -m ./a -m ./b
+                         支持空格分隔: -m "./a ./b"
+  -r, --readonly         🔒 紧跟 -m 之后使用，将前一个 -m 目录以只读方式挂载
   --no-mount             🟢 不挂载任何工作目录（完全无法触碰宿主机文件，最安全）
   --env FILE             指定特定的 .env 文件路径
   --dry-run              仅打印 docker run 命令而不实际启动容器
   -h, --help             显示此帮助信息及安全警告
 
 安全等级说明 (⚠ 请谨慎选择):
-  🟢 隔离级别 (高) : 使用 --no-mount
-                   Agent 完全运行在 Docker 隔离沙盒中，零宿主文件受损风险。
-  🟡 沙盒级别 (中) : 使用 -m <副本目录>
-                   事先复制你的代码到指定目录再挂载。Agent 只能折腾副本，原始文件绝对安全。
-  🔴 映射级别 (低) : 直接运行 (默认挂载 PWD)
-                   最便捷，但 Agent 可以对你当前目录下的所有文件执行读/写/删操作。
-                   若使用不信任的 Agent 提示词，存在文件被清空的可能！
+  风险等级由 挂载模式 × Home持久化 组合决定:
+
+  🟢 隔离级别  : --no-mount + -e  (完全隔离，用完即焚)
+  🟢 低风险    : --no-mount       (隔离宿主文件，持久化 home 有配置被改风险)
+  🟢 低风险    : 全只读挂载 + -e  (只能读取，退出不留痕)
+  🟡 中低风险  : 全只读挂载       (只能读取，但持久化 home 有配置被改风险)
+  🟡 中风险    : 有可写挂载 + -e  (可操作挂载目录，退出不留痕)
+  🔴 高风险    : 有可写挂载       (可操作挂载目录 + 持久化 home 可留后门)
 
 示例:
-  dkagent                           # 挂载当前目录，持久化 home，进入 zsh
-  dkagent claude                    # 挂载当前目录，直接启动 Claude
-  dkagent -e claude                 # 🧊 临时 home 干净环境 + 挂载当前目录 + 启动 Claude
-  dkagent -m ./sandbox_dir claude   # 🟡 沙盒模式下，挂载副本目录并启动 Claude
-  dkagent --no-mount                # 🟢 纯 shell，不挂载任何工作目录，管理容器配置
-  dkagent --env ~/custom.env        # 使用自定义的 .env 配置文件
+  dkagent                                    # 挂载当前目录到 workspace/<basename>
+  dkagent claude                             # 挂载当前目录，直接启动 Claude
+  dkagent -e claude                          # 🧊 临时 home + 挂载当前目录
+  dkagent -m ./project-a -m ./project-b      # 挂载多个目录
+  dkagent -m ./original -r -m ./copy claude  # 原始目录只读，副本可读写
+  dkagent --no-mount                         # 🟢 不挂载任何目录
+  dkagent --env ~/custom.env                 # 使用自定义的 .env 配置文件
 EOF
 }
 
@@ -106,7 +113,7 @@ build_env_args() {
 
 USE_PERSISTENT_HOME=true
 MOUNT_MODE="PWD" # PWD, CUSTOM, NONE
-MOUNT_DIR=""
+MOUNT_DIRS=()    # 每个元素: "/path/to/dir:rw" 或 "/path/to/dir:ro"
 CUSTOM_ENV=""
 DRY_RUN=false
 AGENT_CMD=""
@@ -128,11 +135,30 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             MOUNT_MODE="CUSTOM"
-            MOUNT_DIR="$2"
+            # 按空格拆分，支持 -m "./a ./b" 和 -m ./a 两种形式
+            for dir in $2; do
+                MOUNT_DIRS+=("$(cd "$dir" 2>/dev/null && pwd || echo "$dir"):rw")
+            done
             shift 2
+            ;;
+        -r|--readonly)
+            if [[ ${#MOUNT_DIRS[@]} -eq 0 ]]; then
+                echo "❌ 错误: -r/--readonly 必须跟在 -m 之后使用！" >&2
+                exit 1
+            fi
+            # 将最后一个元素的 :rw 改为 :ro
+            last_idx=$(( ${#MOUNT_DIRS[@]} - 1 ))
+            last_entry="${MOUNT_DIRS[$last_idx]}"
+            if [[ "$last_entry" != *":rw" ]]; then
+                echo "❌ 错误: -r/--readonly 只能对可读写目录使用！" >&2
+                exit 1
+            fi
+            MOUNT_DIRS[$last_idx]="${last_entry%:rw}:ro"
+            shift
             ;;
         --no-mount)
             MOUNT_MODE="NONE"
+            MOUNT_DIRS=()
             shift
             ;;
         --env)
@@ -208,36 +234,92 @@ else
 fi
 
 # 2. 挂载工作目录及工作目录设定
-HOST_WORKSPACE_PATH=""
 if [[ "$MOUNT_MODE" == "PWD" ]]; then
-    HOST_WORKSPACE_PATH="$(pwd)"
-    DOCKER_ARGS+=("-v" "${HOST_WORKSPACE_PATH}:${CONTAINER_WORKSPACE}")
-    DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
-    echo "🔴 安全风险: 映射模式 (直接挂载当前目录 ${HOST_WORKSPACE_PATH} -> /home/kali/workspace)"
-elif [[ "$MOUNT_MODE" == "CUSTOM" ]]; then
-    # 获取绝对路径
-    HOST_WORKSPACE_PATH="$(cd "$MOUNT_DIR" 2>/dev/null && pwd || echo "$MOUNT_DIR")"
-    if [[ ! -d "$HOST_WORKSPACE_PATH" ]]; then
-        echo "❌ 错误: 指定的挂载目录不存在: $MOUNT_DIR" >&2
-        exit 1
-    fi
-    DOCKER_ARGS+=("-v" "${HOST_WORKSPACE_PATH}:${CONTAINER_WORKSPACE}")
-    DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
-    echo "🟡 安全风险: 沙盒级别 (挂载指定目录 ${HOST_WORKSPACE_PATH} -> /home/kali/workspace)"
-else
-    DOCKER_ARGS+=("-w" "/home/kali")
-    echo "🟢 安全风险: 隔离级别 (未挂载任何宿主机目录)"
+    MOUNT_DIRS=("$(pwd):rw")
+elif [[ "$MOUNT_MODE" == "NONE" ]]; then
+    MOUNT_DIRS=()
 fi
 
-# 3. 塞入环境变量参数
+# basename 冲突检测
+declare -A SEEN_BASENAMES=()
+for entry in "${MOUNT_DIRS[@]}"; do
+    dir_path="${entry%:*}"
+    base_name="$(basename "$dir_path")"
+    if [[ -n "${SEEN_BASENAMES[$base_name]:-}" ]]; then
+        echo "❌ 错误: 目录名冲突！多个路径的 basename 均为 '${base_name}':" >&2
+        echo "  - ${SEEN_BASENAMES[$base_name]}" >&2
+        echo "  - ${dir_path}" >&2
+        exit 1
+    fi
+    SEEN_BASENAMES["$base_name"]="$dir_path"
+done
+
+# 目录存在性检查 + 挂载构建
+if [[ ${#MOUNT_DIRS[@]} -gt 0 ]]; then
+    DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
+    for entry in "${MOUNT_DIRS[@]}"; do
+        dir_path="${entry%:*}"
+        access="${entry##*:}"
+        base_name="$(basename "$dir_path")"
+        if [[ ! -d "$dir_path" ]]; then
+            echo "❌ 错误: 指定的挂载目录不存在: $dir_path" >&2
+            exit 1
+        fi
+        abs_path="$(cd "$dir_path" 2>/dev/null && pwd)"
+        DOCKER_ARGS+=("-v" "${abs_path}:${CONTAINER_WORKSPACE}/${base_name}:${access}")
+    done
+else
+    DOCKER_ARGS+=("-w" "/home/kali")
+fi
+
+# 3. 打印安全风险信息
+HAS_WRITABLE=false
+HAS_READONLY=false
+for entry in "${MOUNT_DIRS[@]}"; do
+    access="${entry##*:}"
+    if [[ "$access" == "rw" ]]; then
+        HAS_WRITABLE=true
+    else
+        HAS_READONLY=true
+    fi
+done
+
+if [[ ${#MOUNT_DIRS[@]} -eq 0 ]]; then
+    if [[ "$USE_PERSISTENT_HOME" == true ]]; then
+        echo "🟢 安全风险: 隔离级别 (未挂载任何宿主机目录，持久化 home 有配置被改风险)"
+    else
+        echo "🟢 安全风险: 隔离级别 (完全隔离，用完即焚)"
+    fi
+elif [[ "$HAS_WRITABLE" == false ]]; then
+    echo "🟡 安全风险: 只读挂载 (${#MOUNT_DIRS[@]} 个目录以只读方式挂载到 ${CONTAINER_WORKSPACE}/)"
+    for entry in "${MOUNT_DIRS[@]}"; do
+        dir_path="${entry%:*}"
+        abs_path="$(cd "$dir_path" 2>/dev/null && pwd)"
+        echo "  → ${abs_path} (只读)"
+    done
+else
+    echo "🔴 安全风险: 映射级别 (${#MOUNT_DIRS[@]} 个目录挂载到 ${CONTAINER_WORKSPACE}/)"
+    for entry in "${MOUNT_DIRS[@]}"; do
+        dir_path="${entry%:*}"
+        access="${entry##*:}"
+        abs_path="$(cd "$dir_path" 2>/dev/null && pwd)"
+        if [[ "$access" == "ro" ]]; then
+            echo "  → ${abs_path} (只读)"
+        else
+            echo "  → ${abs_path} (可读写)"
+        fi
+    done
+fi
+
+# 4. 塞入环境变量参数
 if [[ ${#ENV_DOCKER_ARGS[@]} -gt 0 ]]; then
     DOCKER_ARGS+=("${ENV_DOCKER_ARGS[@]}")
 fi
 
-# 4. 指定镜像名称
+# 5. 指定镜像名称
 DOCKER_ARGS+=("$DOCKER_IMAGE")
 
-# 5. 指定要执行的命令
+# 6. 指定要执行的命令
 if [[ -n "$AGENT_CMD" ]]; then
     case "$AGENT_CMD" in
         claude|gemini|pi|codex|opencode)
