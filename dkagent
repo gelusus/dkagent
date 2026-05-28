@@ -256,7 +256,14 @@ done
 
 # 目录存在性检查 + 挂载构建
 if [[ ${#MOUNT_DIRS[@]} -gt 0 ]]; then
-    DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
+    # 单目录挂载 → 工作目录直接进入该挂载目录
+    # 多目录挂载 → 工作目录停留在 workspace 根目录
+    if [[ ${#MOUNT_DIRS[@]} -eq 1 ]]; then
+        single_base="$(basename "${MOUNT_DIRS[0]%:*}")"
+        DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}/${single_base}")
+    else
+        DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
+    fi
     for entry in "${MOUNT_DIRS[@]}"; do
         dir_path="${entry%:*}"
         access="${entry##*:}"
