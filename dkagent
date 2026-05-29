@@ -256,6 +256,8 @@ done
 
 # 目录存在性检查 + 挂载构建
 if [[ ${#MOUNT_DIRS[@]} -gt 0 ]]; then
+    # tmpfs 覆盖 workspace，避免持久化 home 时残留旧挂载目录
+    DOCKER_ARGS+=("--tmpfs" "${CONTAINER_WORKSPACE}:noexec")
     # 单目录挂载 → 工作目录直接进入该挂载目录
     # 多目录挂载 → 工作目录停留在 workspace 根目录
     if [[ ${#MOUNT_DIRS[@]} -eq 1 ]]; then

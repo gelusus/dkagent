@@ -1,6 +1,5 @@
 .env
 *.env.Claude_Code_*
 
-workspace/
 *.tar.gz
 
