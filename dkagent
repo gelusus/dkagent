@@ -278,7 +278,7 @@ if [[ ${#MOUNT_DIRS[@]} -gt 0 ]]; then
         DOCKER_ARGS+=("-v" "${abs_path}:${CONTAINER_WORKSPACE}/${base_name}:${access}")
     done
 else
-    DOCKER_ARGS+=("-w" "/home/kali")
+    DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
 fi
 
 # 3. 打印安全风险信息
