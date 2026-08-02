@@ -16,7 +16,16 @@
 set -euo pipefail
 
 # ─── 配置 ───────────────────────────────────────────────
-DOCKER_IMAGE="my-kali-agent"
+# 默认 profile（作者个人偏好，开源后也是默认档）
+DEFAULT_PROFILE="kali"
+
+# 内置 profile → 镜像名映射。用户可在 ~/.config/dkagent/profiles 追加自定义 profile
+declare -A PROFILE_IMAGES=(
+    ["kali"]="my-kali-agent"          # 默认: 基于 Kali Linux，内置完整安全研究/渗透工具链
+    ["slim"]="dkagent-slim"           # 可选: 基于 Debian slim 的精简版，体积小、启动快
+)
+
+# 容器内统一路径（所有 profile 共用，保证持久化 Home 卷可跨镜像复用）
 CONTAINER_WORKSPACE="/home/kali/workspace"
 HOME_VOLUME="agent_docker_kali-home"
 
@@ -26,6 +35,30 @@ ENV_SEARCH_PATHS=(
     "$HOME/.config/dkagent/.env"                  # 2. XDG 风格全局配置
     "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env" # 3. 脚本所在目录 (如符号链接)
 )
+
+# profile 配置文件搜索路径（每行格式: PROFILE_NAME=image-name）
+PROFILE_CONF_PATHS=(
+    "$HOME/.config/dkagent/profiles"              # 1. XDG 风格全局配置
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/profiles" # 2. 脚本所在目录
+)
+
+# 加载自定义 profile（覆盖/追加到内置 PROFILE_IMAGES）
+load_custom_profiles() {
+    for path in "${PROFILE_CONF_PATHS[@]}"; do
+        [[ -z "$path" || ! -f "$path" ]] && continue
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            line="${line#"${line%%[![:space:]]*}"}"
+            # 格式: NAME=image-name
+            if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_-]*= ]]; then
+                local name="${line%%=*}"
+                local image="${line#*=}"
+                PROFILE_IMAGES["$name"]="$image"
+            fi
+        done < "$path"
+    done
+}
+load_custom_profiles
 
 # ─── 函数 ───────────────────────────────────────────────
 
@@ -45,6 +78,10 @@ Agent 名称:
   (留空)         进入交互式 zsh shell
 
 选项:
+  -p, --profile NAME     🎚️ 选择镜像 profile（默认: kali）
+                         内置: kali（完整工具链）、slim（精简 Debian）
+                         可通过 ~/.config/dkagent/profiles 添加自定义 profile
+  --image NAME           🐳 直接指定 Docker 镜像名（优先级高于 --profile）
   -e, --ephemeral        🧊 使用临时 home 目录（不保留任何配置或历史记录，防注入更安全）
   -m, --mount DIR        📁 挂载指定目录到 /home/kali/workspace/<目录名>
                          支持多次指定: -m ./a -m ./b
@@ -54,6 +91,8 @@ Agent 名称:
   --env FILE             指定特定的 .env 文件路径
   --dry-run              仅打印 docker run 命令而不实际启动容器
   -h, --help             显示此帮助信息及安全警告
+
+镜像优先级: --image > --profile > 环境变量 DKAGENT_PROFILE > 默认(kali)
 
 安全等级说明 (⚠ 请谨慎选择):
   风险等级由 挂载模式 × Home持久化 组合决定:
@@ -73,6 +112,8 @@ Agent 名称:
   dkagent -m ./original -r -m ./copy claude  # 原始目录只读，副本可读写
   dkagent --no-mount                         # 🟢 不挂载任何目录
   dkagent --env ~/custom.env                 # 使用自定义的 .env 配置文件
+  dkagent -p slim claude                     # 🎚️ 使用精简镜像运行 Claude
+  dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
 EOF
 }
 
@@ -118,12 +159,31 @@ CUSTOM_ENV=""
 DRY_RUN=false
 AGENT_CMD=""
 EXTRA_ARGS=()
+# 镜像选择：--image > --profile > $DKAGENT_PROFILE > 默认
+CUSTOM_IMAGE=""     # --image 指定的镜像名（最高优先级）
+SELECTED_PROFILE="" # --profile 指定的 profile 名
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
             print_help
             exit 0
+            ;;
+        -p|--profile)
+            if [[ $# -lt 2 ]]; then
+                echo "❌ 错误: -p/--profile 选项需要提供 profile 名称！" >&2
+                exit 1
+            fi
+            SELECTED_PROFILE="$2"
+            shift 2
+            ;;
+        --image)
+            if [[ $# -lt 2 ]]; then
+                echo "❌ 错误: --image 选项需要提供镜像名称！" >&2
+                exit 1
+            fi
+            CUSTOM_IMAGE="$2"
+            shift 2
             ;;
         -e|--ephemeral)
             USE_PERSISTENT_HOME=false
@@ -211,11 +271,46 @@ else
     build_env_args ""
 fi
 
+# ─── 解析最终使用的镜像 ─────────────────────────────────
+# 优先级: --image > --profile > $DKAGENT_PROFILE > $DEFAULT_PROFILE
+
+DOCKER_IMAGE=""
+EFFECTIVE_PROFILE=""
+
+if [[ -n "$CUSTOM_IMAGE" ]]; then
+    # --image 最高优先级，直接用
+    DOCKER_IMAGE="$CUSTOM_IMAGE"
+    # 反查是否匹配某个 profile（仅用于显示）
+    for name in "${!PROFILE_IMAGES[@]}"; do
+        if [[ "${PROFILE_IMAGES[$name]}" == "$DOCKER_IMAGE" ]]; then
+            EFFECTIVE_PROFILE="$name"
+            break
+        fi
+    done
+else
+    # 确定 profile 名: --profile > 环境变量 > 默认
+    EFFECTIVE_PROFILE="${SELECTED_PROFILE:-${DKAGENT_PROFILE:-$DEFAULT_PROFILE}}"
+    if [[ -z "${PROFILE_IMAGES[$EFFECTIVE_PROFILE]:-}" ]]; then
+        echo "❌ 错误: 未知的 profile '$EFFECTIVE_PROFILE'。" >&2
+        echo "可用 profile: ${!PROFILE_IMAGES[*]}" >&2
+        echo "提示: 可通过 --image <镜像名> 直接指定任意镜像，或在 ~/.config/dkagent/profiles 添加自定义 profile。" >&2
+        exit 1
+    fi
+    DOCKER_IMAGE="${PROFILE_IMAGES[$EFFECTIVE_PROFILE]}"
+fi
+
+echo "📦 使用镜像: $DOCKER_IMAGE${EFFECTIVE_PROFILE:+ (profile: $EFFECTIVE_PROFILE)}"
+
 # ─── 检查 Docker 镜像是否存在 ─────────────────────────────
 
 if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
     echo "❌ 错误: 本地找不到 Docker 镜像 '$DOCKER_IMAGE'。" >&2
-    echo "请在项目主目录下运行 'docker compose build' 构建该镜像后再试！" >&2
+    echo "请先构建该镜像。内置 profile 的构建方式:" >&2
+    echo "  kali  → 在项目主目录运行 'docker compose build'" >&2
+    echo "  slim  → 运行 'docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .'" >&2
+    if [[ -n "$EFFECTIVE_PROFILE" && "$EFFECTIVE_PROFILE" != "kali" && "$EFFECTIVE_PROFILE" != "slim" ]]; then
+        echo "  '$EFFECTIVE_PROFILE' 是自定义 profile，请用对应方式构建镜像 '$DOCKER_IMAGE'。" >&2
+    fi
     exit 1
 fi
 

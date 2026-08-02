@@ -1,5 +1,11 @@
+# 敏感配置文件（含 API Keys，切勿提交）
 .env
 *.env.Claude_Code_*
+
+# 本地 AI 工具配置目录（非项目内容，不应开源）
+.antigravitycli/
+.claude/
+.zcode/
 
 *.tar.gz
 

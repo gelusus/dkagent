@@ -13,7 +13,7 @@ set -euo pipefail
 BIN_PATH="/usr/local/bin/dkagent"
 CONFIG_DIR="$HOME/.config/dkagent"
 CONFIG_FILE="${CONFIG_DIR}/.env"
-DOCKER_IMAGE="my-kali-agent"
+DOCKER_IMAGE="${DKAGENT_IMAGE:-my-kali-agent}"
 
 # ─── 帮助 ───────────────────────────────────────────────
 print_help() {
@@ -71,9 +71,10 @@ install_agent() {
 
     # 5. 检查镜像是否存在并友好提示
     if ! docker image inspect "${DOCKER_IMAGE}" &>/dev/null; then
-        echo -e "\n⚠️  警告: 本地未检测到 Docker 镜像 '${DOCKER_IMAGE}'。"
-        echo "👉 请记得在项目主目录下运行以下命令构建镜像:"
-        echo "   docker compose build"
+        echo -e "\n⚠️  警告: 本地未检测到 Docker 镜像 '${DOCKER_IMAGE}' (默认 profile: kali)。"
+        echo "👉 请先构建镜像:"
+        echo "   kali  (默认): docker compose build"
+        echo "   slim  (精简):  docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim ."
     fi
 
     # 6. 安装完成提示

@@ -1,3 +1,12 @@
+# dkagent - Docker Compose 备用运行方式
+#
+# 镜像选择：默认使用 my-kali-agent（kali profile）
+# 切换镜像：DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
+# 构建精简镜像：docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .
+#
+# 注：所有模式共享同一个持久化 Home 卷（agent_docker_kali-home），
+#     与 dkagent CLI 完全互通，配置/历史/Agent 凭证跨模式保留。
+
 services:
   # ========================================================
   # 🏠 模式 A: 调试/Shell模式 (shell)
@@ -7,11 +16,11 @@ services:
   # ========================================================
   agent-shell:
     build: .
-    image: my-kali-agent
+    image: ${DKAGENT_IMAGE:-my-kali-agent}
     env_file:
       - .env
     volumes:
-      - kali-home:/home/kali
+      - agent_docker_kali-home:/home/kali
     stdin_open: true
     tty: true
     command: /bin/zsh
@@ -20,11 +29,11 @@ services:
   # 🧊 模式 B: 纯净/隔离模式 (isolated)
   # 运行: docker compose run --rm agent-isolated
   # 安全: 🟢 隔离级别 - 不挂载任何宿主机工作目录
-  # 特点: 无 any 挂载卷，纯净镜像环境，用完即焚
+  # 特点: 无任何挂载卷，纯净镜像环境，用完即焚
   # ========================================================
   agent-isolated:
     build: .
-    image: my-kali-agent
+    image: ${DKAGENT_IMAGE:-my-kali-agent}
     env_file:
       - .env
     stdin_open: true
@@ -39,11 +48,11 @@ services:
   # ========================================================
   agent-sandboxed:
     build: .
-    image: my-kali-agent
+    image: ${DKAGENT_IMAGE:-my-kali-agent}
     env_file:
       - .env
     volumes:
-      - kali-home:/home/kali
+      - agent_docker_kali-home:/home/kali
       - ./workspace:/home/kali/workspace
     working_dir: /home/kali/workspace
     stdin_open: true
@@ -51,5 +60,4 @@ services:
     command: /bin/zsh
 
 volumes:
-  kali-home:
-
+  agent_docker_kali-home:

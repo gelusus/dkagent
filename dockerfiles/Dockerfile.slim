@@ -1,0 +1,70 @@
+# dkagent slim profile - 精简版镜像
+#
+# 与默认的 kali profile 相比：
+#   - 基于 debian:bookworm-slim（体积小、启动快，约 1/3 大小）
+#   - 不装 kali-linux-headless 及渗透测试工具链（nmap/burp/sqlmap 等）
+#   - 保留完整的 AI Agent CLI（claude/gemini/codex/pi/opencode）和常用开发工具
+#
+# ⚠️ 重要：本镜像同样创建 kali 用户 + /home/kali 路径，
+#    因此可与 kali profile 共享同一个持久化 Home 卷（agent_docker_kali-home），
+#    切换镜像时 zsh 配置、命令历史、Agent 登录凭证全部保留。
+#
+# 构建: docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .
+# 使用: dkagent -p slim claude
+
+FROM debian:bookworm-slim
+
+# 设置环境变量
+ENV TZ=Asia/Shanghai
+ENV PLAYWRIGHT_MCP_BROWSER=chromium
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装基础依赖（curl/git/zsh/sudo 等通用工具，无 Kali 专属包）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates curl git sudo zsh vim jq bsdextrautils \
+        npm iputils-ping rlwrap less procps && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# 创建普通用户并赋予 sudo 免密权限（用户名固定为 kali，保证 Home 卷可跨镜像复用）
+RUN useradd -m -s /bin/zsh kali && \
+    echo "kali ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+USER kali
+
+# 安装 oh-my-zsh 及自动补全插件（与 kali profile 一致）
+RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions && \
+    git clone --depth=1 https://github.com/zsh-users/zsh-completions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-completions && \
+    sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-completions)/' ~/.zshrc
+
+# 安装 Playwright（AI Agent 常用的浏览器自动化依赖）
+RUN sudo apt-get update && \
+    sudo apt-get install -y --no-install-recommends \
+        libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+        libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+        libxrandr2 libgbm1 libasound2 && \
+    sudo apt-get clean && \
+    sudo rm -rf /var/lib/apt/lists/* && \
+    sudo npm install -g @playwright/cli@latest && \
+    cd /tmp && playwright-cli install
+
+# 安装 fd 和 ripgrep（pi agent 依赖）
+RUN FD_TAG=$(curl -fsSL https://api.github.com/repos/sharkdp/fd/releases/latest | jq -r '.tag_name') && \
+    echo "fd: ${FD_TAG}" && \
+    sudo curl -fsSL https://github.com/sharkdp/fd/releases/download/${FD_TAG}/fd-${FD_TAG}-x86_64-unknown-linux-musl.tar.gz | \
+        sudo tar xz -C /usr/local/bin --strip-components=1 fd-${FD_TAG}-x86_64-unknown-linux-musl/fd && \
+    RG_TAG=$(curl -fsSL https://api.github.com/repos/BurntSushi/ripgrep/releases/latest | jq -r '.tag_name') && \
+    echo "rg: ${RG_TAG}" && \
+    sudo curl -fsSL https://github.com/BurntSushi/ripgrep/releases/download/${RG_TAG}/ripgrep-${RG_TAG}-x86_64-unknown-linux-musl.tar.gz | \
+        sudo tar xz -C /usr/local/bin --strip-components=1 ripgrep-${RG_TAG}-x86_64-unknown-linux-musl/rg
+
+# 安装各类 AI Agent CLI
+RUN sudo npm install -g @openai/codex && \
+    curl -fsSL https://claude.ai/install.sh | bash && \
+    sudo npm install -g @earendil-works/pi-coding-agent && \
+    sudo npm install -g @google/gemini-cli && \
+    sudo npm install -g opencode-ai@latest
+ENV PATH="/home/kali/.local/bin:${PATH}"
+
+WORKDIR /home/kali
