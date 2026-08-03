@@ -23,7 +23,7 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
 
 # 安装依赖和 Playwright
 RUN sudo apt update && \
-    sudo apt install -y bsdextrautils npm jq iputils-ping sshpass ncat rlwrap && \
+    sudo apt install -y bsdextrautils npm jq iputils-ping sshpass ncat rlwrap docker-cli && \
     sudo apt clean && \
     sudo rm -rf /var/lib/apt/lists/* && \
     sudo npm install -g @playwright/cli@latest && \

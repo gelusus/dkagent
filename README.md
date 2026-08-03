@@ -26,7 +26,7 @@ dkagent -m ./original -r -m ./workspace/my-copy claude
 
 ---
 
-## 30 秒上手
+## 快速开始
 
 ```bash
 # 1. 配置 API Keys（文件已被 git 忽略，切勿提交）
@@ -43,6 +43,19 @@ chmod +x install.sh && ./install.sh
 cd ~/my-project
 dkagent claude
 ```
+
+> **macOS 用户**：本脚本用到 bash 4+ 的关联数组，macOS 系统自带 bash 是 3.2（2007），需先 `brew install bash` 装新版。详见下方[平台支持](#平台支持)。
+
+---
+
+## 平台支持
+
+| 平台 | 状态 | 说明 |
+| :--- | :--- | :--- |
+| **Linux** | ✅ 原生支持 | 已验证 |
+| **WSL2** | ✅ 原生支持 | 已验证。Windows 用户推荐用 WSL2 + Docker Desktop |
+| **macOS** | ⚠️ 理论可行，未实测 | 脚本用了 bash 4+ 关联数组，macOS 系统 bash 是 3.2，需先 `brew install bash`。欢迎 macOS 用户反馈实际体验 |
+| **Windows 原生** | ❌ 不支持 | 无 bash/sudo，请用 WSL2 |
 
 ---
 
@@ -78,6 +91,56 @@ rust=my-rust-agent
 
 ---
 
+## 配置迁移（从宿主机复用登录态）
+
+如果你已在宿主机登录过某个 Agent，可把登录态一次性拷进 dkagent 持久化卷，避免在容器里重新登录。以下命令在**宿主机**执行。
+
+### 各 Agent 配置路径速查
+
+| Agent | 配置目录 | 关键凭证文件 | 备注 |
+| :--- | :--- | :--- | :--- |
+| Claude Code | `~/.claude/` + `~/.claude.json` | `~/.claude/.credentials.json` (0600) | 还需单独拷 `~/.claude.json` 这个文件 |
+| Codex | `~/.codex/` | `~/.codex/auth.json` | 文件不存在说明走 keychain，无法迁移 |
+| OpenCode | `~/.config/opencode/` + `~/.local/share/opencode/` | `~/.local/share/opencode/auth.json` | 配置和凭证是两个目录，都要拷 |
+| Pi | `~/.pi/agent/` | `~/.pi/agent/auth.json` | |
+
+### 以 Claude Code 为例
+
+```bash
+# 1. 拷贝 ~/.claude/ 配置目录（含登录凭证）
+docker run --rm \
+  -v agent_docker_kali-home:/home/kali \
+  -v "$HOME/.claude:/src:ro" \
+  alpine sh -c "mkdir -p /home/kali/.claude && cp -a /src/. /home/kali/.claude/"
+
+# 2. 拷贝 ~/.claude.json 用户配置文件（注意是文件不是目录）
+docker run --rm \
+  -v agent_docker_kali-home:/home/kali \
+  -v "$HOME/.claude.json:/src:ro" \
+  alpine sh -c "cp -a /src /home/kali/.claude.json"
+```
+
+### 以 Codex 为例
+
+```bash
+# 前置检查：若 ~/.codex/auth.json 不存在，说明凭证在 keychain，无法用文件迁移
+ls ~/.codex/auth.json
+
+docker run --rm \
+  -v agent_docker_kali-home:/home/kali \
+  -v "$HOME/.codex:/src:ro" \
+  alpine sh -c "mkdir -p /home/kali/.codex && cp -a /src/. /home/kali/.codex/"
+```
+
+> [!WARNING]
+> **迁移注意事项**
+> - **Gemini 建议容器内重新登录**：默认用系统 keyring 存凭证，加密 key 绑定 hostname + username，迁移到容器后大概率解不开。
+> - **覆盖风险**：上述命令会覆盖容器内同名文件。若容器里已有配置，先备份。
+> - **跨平台**：macOS 来源的 keychain 凭证无法用文件迁移，需在容器内重新登录。
+> - **属主权限**：迁移后若凭证读不到，通常是属主不对，进容器 `sudo chown -R kali:kali ~/.对应目录` 修复。
+
+---
+
 ## 安全模型：一眼看懂你给了 Agent 多大权限
 
 AI Agent 在执行任务时拥有强大的文件系统权限。为防止 Agent 遭遇恶性提示词或误判时删除、清空宿主机文件（如 `rm -rf` 风险），dkagent 用 **挂载模式 × Home 持久化** 两个维度组合出清晰的风险等级，每次运行都会打印当前级别。
@@ -110,10 +173,15 @@ AI Agent 在执行任务时拥有强大的文件系统权限。为防止 Agent �
 | **`dkagent -e -m ... [agent]`** | 🧊 用完即焚 | 🔴 有可写 | **中 (🟡)** | 临时沙盒编码 |
 | **`dkagent [agent]`** | 🏠 持久化卷 | 🔴 有可写 | **高 (🔴)** | 日常高效编码（信任 Agent） |
 | **`dkagent -m ... [agent]`** | 🏠 持久化卷 | 🔴 有可写 | **高 (🔴)** | 多目录编码任务 |
+| **`dkagent --docker-socket [agent]`** | 🏠/🧊 | 🐋 docker.sock | **逃逸 (☠️)** | 需在容器内运行 docker 命令 |
 
 > [!CAUTION]
 > **关于 Home 卷持久化的安全提示 (🏠)**:
 > 持久化 Home 卷会保留你的 Oh-My-Zsh 配置、命令历史及 Agent 的会话 Session。如果 Agent 被外部恶意控制，理论上可能通过修改你持久化的 `.zshrc` 来埋下后门。若对运行安全性有极端要求，推荐加 `-e`（用完即焚）选项。
+
+> [!CAUTION]
+> **关于 `--docker-socket` 的安全提示 (☠️)**:
+> `--docker-socket` 会挂载宿主机的 `/var/run/docker.sock` 到容器内。**这等同于把宿主机 root 权限交给容器**——容器内可任意控制宿主 Docker（包括 `docker run -v /:/host` 读写宿主根文件系统）。仅在你完全信任 Agent 且确实需要在容器内运行 docker 命令时使用。
 
 ---
 
@@ -148,6 +216,9 @@ dkagent -p slim claude
 
 # 纯净模式，不挂载任何宿主机目录
 dkagent --no-mount
+
+# 容器内可用 docker 命令（⚠️ 最高风险，等同宿主 root）
+dkagent --docker-socket claude
 ```
 
 ### 可选参数
@@ -160,6 +231,7 @@ dkagent --no-mount
 | `-m, --mount DIR` | 📁 挂载目录到 `/home/kali/workspace/<目录名>`，支持多次指定或空格分隔 |
 | `-r, --readonly` | 🔒 紧跟 `-m` 之后，将前一个目录以只读方式挂载 |
 | `--no-mount` | 🟢 不挂载任何宿主机目录（最安全） |
+| `--docker-socket` | 🐋 挂载宿主 docker.sock，容器内可运行 docker 命令（⚠️ **最高风险，等同宿主 root**） |
 | `--env FILE` | 手动指定 `.env` 配置文件 |
 | `--dry-run` | 🔍 仅打印将要执行的 `docker run` 命令，不实际启动 |
 | `-h, --help` | 显示帮助 |
