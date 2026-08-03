@@ -64,17 +64,30 @@ install_agent() {
         fi
     else
         if [[ ! -f "${CONFIG_FILE}" ]]; then
-            echo "⚠️  注意: 当前目录未发现 .env 文件。容器可能因为没有 API Keys 无法正常工作。"
-            echo "提示: 你可以运行 'cp .env.example ${CONFIG_FILE}' 并编辑它。"
+            # 当前目录无 .env，自动用 .env.example 创建模板（若存在）
+            local template=""
+            [[ -f ".env.example" ]] && template=".env.example"
+            [[ -f "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env.example" ]] && \
+                template="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env.example"
+            if [[ -n "$template" ]]; then
+                echo "📋 当前目录无 .env，从模板 ${template} 创建 ${CONFIG_FILE}..."
+                cp "$template" "${CONFIG_FILE}"
+                chmod 600 "${CONFIG_FILE}"
+                echo "✅ 配置模板已创建，请编辑填入你的 API Keys: vi ${CONFIG_FILE}"
+            else
+                echo "⚠️  注意: 未找到 .env 或 .env.example。容器可能因为没有 API Keys 无法正常工作。"
+                echo "提示: 手动创建 ${CONFIG_FILE} 并填入 API Keys。"
+            fi
         fi
     fi
 
     # 5. 检查镜像是否存在并友好提示
     if ! docker image inspect "${DOCKER_IMAGE}" &>/dev/null; then
         echo -e "\n⚠️  警告: 本地未检测到 Docker 镜像 '${DOCKER_IMAGE}' (默认 profile: kali)。"
-        echo "👉 请先构建镜像:"
-        echo "   kali  (默认): docker compose build"
-        echo "   slim  (精简):  docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim ."
+        echo "👉 推荐先构建精简镜像（快，约 2-3 分钟）:"
+        echo "   docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim ."
+        echo "   然后用: dkagent -p slim claude"
+        echo "   或构建完整 Kali 镜像（约 15-30 分钟）: docker compose build"
     fi
 
     # 6. 安装完成提示

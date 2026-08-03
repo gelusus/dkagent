@@ -8,7 +8,7 @@
 
 ## 为什么用 dkagent
 
-AI Agent（如 Claude Code、Codex）现在都自带沙箱了，但它们解决的是"单目录单 agent 怎么不搞坏你的电脑"。dkagent 解决的是另外三个问题：
+部分 AI Agent（如 Claude Code、Codex）开始提供自带沙箱，但它们主要面向"单目录、单 agent"场景。dkagent 解决的是另外几个问题：
 
 **1. 多目录协作 —— 自带沙箱做不到**
 你可以同时挂载多个目录，每个目录独立控制读写权限：
@@ -28,20 +28,32 @@ dkagent -m ./original -r -m ./workspace/my-copy claude
 
 ## 快速开始
 
+推荐先用 **slim 镜像**（基于 Debian slim，体积小、构建快，约 2-3 分钟），跑通后再按需切换 Kali 镜像。
+
 ```bash
-# 1. 配置 API Keys（文件已被 git 忽略，切勿提交）
-cp .env.example .env
-# 编辑 .env 填入你的 API Keys
-
-# 2. 构建默认镜像（kali profile）
-docker compose build
-
-# 3. 安装 CLI 工具（创建软链 + 拷贝配置）
+# 1. 安装 CLI 工具（会自动创建 ~/.config/dkagent/ 并拷贝 .env 模板）
 chmod +x install.sh && ./install.sh
+
+# 2. 填入 API Keys（首次安装后在此文件编辑，切勿提交 git）
+vi ~/.config/dkagent/.env
+
+# 3. 构建 slim 镜像（快速，约 2-3 分钟）
+docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .
 
 # 4. 在任意目录下，一行命令拉起
 cd ~/my-project
-dkagent claude
+dkagent -p slim claude --dangerously-skip-permissions
+```
+
+> **关于 `--dangerously-skip-permissions`**：因为 dkagent 已用容器做了隔离，可以放心把这个"全自动"标志交给 Agent，让它在容器内免确认地执行命令——这正是容器化的核心收益。
+
+### 想用 Kali 镜像？（可选）
+
+Kali 镜像内置完整安全研究工具链（nmap、metasploit、Playwright 等），但**体积约 10GB，首次构建需要 15-30 分钟**（取决于网络）：
+
+```bash
+docker compose build              # 构建 kali 镜像（my-kali-agent）
+dkagent claude                    # 默认就用 kali profile
 ```
 
 > **macOS 用户**：本脚本用到 bash 4+ 的关联数组，macOS 系统自带 bash 是 3.2（2007），需先 `brew install bash` 装新版。详见下方[平台支持](#平台支持)。
@@ -283,8 +295,8 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 - [x] 多目录挂载 + 逐目录只读控制
 - [x] 8 档风险分级可视化
 - [x] 多镜像 profile 切换
+- [x] 容器内运行 Docker（`--docker-socket`）
 - [ ] **网络隔离档位**（`--net off` / `--net strict`，简单易用，契合多 agent 场景）
-- [ ] 密钥泄露扫描（挂载前扫描敏感文件）
 
 ---
 
