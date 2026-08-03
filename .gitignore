@@ -1,6 +1,17 @@
 # 敏感配置文件（含 API Keys，切勿提交）
 .env
+.env.*
+!.env.example
 *.env.Claude_Code_*
+
+# 凭证/密钥文件（开源前防误推）
+*.pem
+*.key
+*.p12
+*.pfx
+.id_rsa
+npmrc
+.netrc
 
 # 本地 AI 工具配置目录（非项目内容，不应开源）
 .antigravitycli/
@@ -8,4 +19,3 @@
 .zcode/
 
 *.tar.gz
-
