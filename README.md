@@ -2,7 +2,19 @@
 
 > 一个 bash 命令，把任意目录变成隔离的 AI Agent 运行环境。
 
-基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Gemini CLI、Codex、Pi、OpenCode 五大 Agent，支持**多目录协作**、**逐目录只读挂载**、**多镜像 profile** 切换，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
+基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Gemini CLI、Codex、Pi、OpenCode 五大 Agent，支持**逐目录只读挂载**、**多镜像 profile** 切换，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
+
+---
+
+## 设计理念：简单 + 安全外包给 Docker
+
+dkagent 本质上就是**一个 ~500 行的 bash 脚本**，不包含任何自己实现的沙箱逻辑。它做的事只有一件：**把 Docker 已有的隔离能力编排成好用的命令行**。
+
+- **安全性 = Docker 本身**：容器隔离靠的是 Docker 原生的 namespace / cgroup / bind mount，这些是经过十年生产验证的内核机制。dkagent 不重新发明它们，只是按需调用。
+- **风险等级 = 你挂了什么**：每个 🟢🟡🔴 等级直接对应挂载卷的范围，没有任何隐藏逻辑。`--dry-run` 能让你在运行前看到完整的 `docker run` 命令，所见即所得。
+- **可审计**：整个工具就是一个脚本，没有后台进程、没有 daemon、没有运行时注入。读一遍源码就能完全理解它对你系统做了什么。
+
+这也是为什么 dkagent 能放心地把 `--dangerously-skip-permissions` 交给 Agent——真正的安全边界是容器，不是 Agent 自己的权限确认。
 
 ---
 
