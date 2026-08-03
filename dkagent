@@ -166,7 +166,7 @@ EXTRA_ARGS=()
 # 镜像选择：--image > --profile > $DKAGENT_PROFILE > 默认
 CUSTOM_IMAGE=""     # --image 指定的镜像名（最高优先级）
 SELECTED_PROFILE="" # --profile 指定的 profile 名
-ENABLE_DOCKER=false # --docker: 挂载宿主 docker.sock，让容器内可运行 docker 命令
+ENABLE_DOCKER=false # --docker-socket: 挂载宿主 docker.sock，让容器内可运行 docker 命令
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -385,7 +385,7 @@ else
     DOCKER_ARGS+=("-w" "${CONTAINER_WORKSPACE}")
 fi
 
-# 2.5 挂载宿主 docker.sock（--docker 模式，让容器内可运行 docker 命令）
+# 2.5 挂载宿主 docker.sock（--docker-socket 模式，让容器内可运行 docker 命令）
 if [[ "$ENABLE_DOCKER" == true ]]; then
     # sock 路径发现：环境变量覆盖 > DOCKER_HOST 解析 > 常见路径探测 > 兜底
     DOCKER_SOCK="${DKAGENT_DOCKER_SOCK:-}"
