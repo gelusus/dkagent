@@ -1,5 +1,7 @@
 # dkagent
 
+> 📖 English documentation: [README.en.md](README.en.md)
+
 > 一个 bash 命令，把任意目录变成隔离的 AI Agent 运行环境。
 
 基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Gemini CLI、Codex、Pi、OpenCode 五大 Agent，支持**逐目录只读挂载**、**多镜像 profile** 切换，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
@@ -209,6 +211,23 @@ AI Agent 在执行任务时拥有强大的文件系统权限。为防止 Agent �
 
 ---
 
+## 界面语言
+
+dkagent 的界面提示会自动识别语言，**默认中文**，同时完整支持英文：
+
+- **自动识别**：读取 `$LANG` / `$LC_ALL`——`zh_*` 用中文，其他用英文
+- **手动覆盖**：`dkagent --lang en`（或 `zh`）
+- **持久覆盖**：`export DKAGENT_LANG=en`
+
+优先级：`--lang` 参数 > `DKAGENT_LANG` 环境变量 > `$LANG`/`$LC_ALL` 自动识别 > 默认中文。
+
+```bash
+dkagent --lang en --help          # 英文帮助
+LANG=en_US.UTF-8 dkagent --help   # 自动识别为英文
+```
+
+---
+
 ## 命令行使用说明
 
 ### 基础命令结构
@@ -257,6 +276,7 @@ dkagent --docker-socket claude
 | `--no-mount` | 🟢 不挂载任何宿主机目录（最安全） |
 | `--docker-socket` | 🐋 挂载宿主 docker.sock，容器内可运行 docker 命令（⚠️ **最高风险，等同宿主 root**） |
 | `--env FILE` | 手动指定 `.env` 配置文件 |
+| `--lang zh\|en` | 🌐 设置界面语言（默认：根据 `$LANG`/`$LC_ALL` 自动识别） |
 | `--dry-run` | 🔍 仅打印将要执行的 `docker run` 命令，不实际启动 |
 | `-h, --help` | 显示帮助 |
 
@@ -308,6 +328,7 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 - [x] 8 档风险分级可视化
 - [x] 多镜像 profile 切换
 - [x] 容器内运行 Docker（`--docker-socket`）
+- [x] 中英文双语界面（自动识别）
 - [ ] **网络隔离档位**（`--net off` / `--net strict`，简单易用，契合多 agent 场景）
 
 ---

@@ -60,10 +60,179 @@ load_custom_profiles() {
 }
 load_custom_profiles
 
+# ─── 国际化（i18n）─────────────────────────────────────────
+# 语言检测优先级: --lang 参数 > DKAGENT_LANG 环境变量 > $LANG/$LC_ALL 自动判断 > 默认中文
+# zh_* → 中文，其他一律英文（含 LANG=C 这种未设置的兜底为英文，但为保持向后兼容默认中文）
+detect_language() {
+    local lang="${DKAGENT_LANG:-}"
+    if [[ -z "$lang" ]]; then
+        if [[ "${LC_ALL:-}" == zh* || "${LANG:-}" == zh* ]]; then
+            lang="zh"
+        elif [[ -z "${LC_ALL:-}${LANG:-}" || "${LC_ALL:-}" == "C"* || "${LANG:-}" == "C"* ]]; then
+            lang="zh"  # 未设置 locale 或 C/POSIX → 默认中文（作者母语，向后兼容）
+        else
+            lang="en"
+        fi
+    fi
+    echo "$lang"
+}
+CURRENT_LANG="$(detect_language)"
+
+# 消息表：中文
+declare -A MSG_ZH=(
+    [err_unknown_opt]="❌ 错误: 未知选项: %s"
+    [err_see_help]="请运行 'dkagent --help' 查看可用选项"
+    [err_opt_needs_arg]="❌ 错误: %s 选项需要提供参数！"
+    [err_profile_unknown]="❌ 错误: 未知的 profile '%s'。"
+    [err_profile_available]="可用 profile: %s"
+    [err_profile_hint]="提示: 可通过 --image <镜像名> 直接指定任意镜像，或在 ~/.config/dkagent/profiles 添加自定义 profile。"
+    [err_env_not_exist]="❌ 指定的 .env 文件不存在: %s"
+    [err_dir_not_exist]="❌ 错误: 指定的挂载目录不存在: %s"
+    [err_basename_conflict]="❌ 错误: 目录名冲突！多个路径的 basename 均为 '%s':"
+    [err_readonly_no_mount]="❌ 错误: -r/--readonly 必须跟在 -m 之后使用！"
+    [err_readonly_not_writable]="❌ 错误: -r/--readonly 只能对可读写目录使用！"
+    [err_docker_sock_not_found]="❌ 错误: --docker-socket 找不到 docker socket: %s"
+    [err_docker_sock_hint]="提示: 可通过 DKAGENT_DOCKER_SOCK 环境变量指定 sock 路径"
+    [err_image_not_found]="❌ 错误: 本地找不到 Docker 镜像 '%s'。"
+    [err_image_build_hint]="请先构建该镜像。内置 profile 的构建方式:"
+    [err_image_build_kali]="  kali  → 在项目主目录运行 'docker compose build'"
+    [err_image_build_slim]="  slim  → 运行 'docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .'"
+    [err_image_build_custom]="  '%s' 是自定义 profile，请用对应方式构建镜像 '%s'。"
+    [using_env_file]="📋 使用配置文件: %s"
+    [no_env_file]="⚠️  未检测到任何 .env 配置文件，将仅使用当前终端的环境变量"
+    [using_image]="📦 使用镜像: %s"
+    [using_image_with_profile]="📦 使用镜像: %s (profile: %s)"
+    [mode_persistent_home]="🏠 模式: 持久化 Home (保留工具配置、自动补全及命令历史)"
+    [mode_ephemeral_home]="🧊 模式: 临时 Home (纯净环境，安全无污染)"
+    [mount_readonly_count]="🟡 安全风险: 只读挂载 (%s 个目录以只读方式挂载到 %s/)"
+    [mount_writable_count]="🔴 安全风险: 映射级别 (%s 个目录挂载到 %s/)"
+    [mount_detail_ro]="  → %s (只读)"
+    [mount_detail_rw]="  → %s (可读写)"
+    [risk_iso_persistent]="🟢 安全风险: 隔离级别 (未挂载任何宿主机目录，持久化 home 有配置被改风险)"
+    [risk_iso_ephemeral]="🟢 安全风险: 隔离级别 (完全隔离，用完即焚)"
+    [risk_docker_escape]="☠️  安全风险: 容器逃逸级别 (已挂载 docker.sock = 宿主机 root，容器内可完全控制宿主 Docker)"
+    [dry_run_header]="\n🔍 Dry-run 模式，实际执行命令如下:"
+    [starting]="🐳 正在拉起 AI Agent Docker 运行环境..."
+)
+
+# 消息表：英文
+declare -A MSG_EN=(
+    [err_unknown_opt]="❌ Error: Unknown option: %s"
+    [err_see_help]="Run 'dkagent --help' to see available options"
+    [err_opt_needs_arg]="❌ Error: %s option requires an argument!"
+    [err_profile_unknown]="❌ Error: Unknown profile '%s'."
+    [err_profile_available]="Available profiles: %s"
+    [err_profile_hint]="Hint: use --image <name> to specify any image, or add custom profiles in ~/.config/dkagent/profiles."
+    [err_env_not_exist]="❌ Error: Specified .env file does not exist: %s"
+    [err_dir_not_exist]="❌ Error: Mount directory does not exist: %s"
+    [err_basename_conflict]="❌ Error: Directory name conflict! Multiple paths share basename '%s':"
+    [err_readonly_no_mount]="❌ Error: -r/--readonly must follow an -m option!"
+    [err_readonly_not_writable]="❌ Error: -r/--readonly can only apply to a writable mount!"
+    [err_docker_sock_not_found]="❌ Error: --docker-socket cannot find docker socket: %s"
+    [err_docker_sock_hint]="Hint: set DKAGENT_DOCKER_SOCK env var to specify the socket path"
+    [err_image_not_found]="❌ Error: Docker image '%s' not found locally."
+    [err_image_build_hint]="Please build it first. Built-in profiles:"
+    [err_image_build_kali]="  kali  → run 'docker compose build' in the project root"
+    [err_image_build_slim]="  slim  → run 'docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .'"
+    [err_image_build_custom]="  '%s' is a custom profile, build image '%s' accordingly."
+    [using_env_file]="📋 Using config file: %s"
+    [no_env_file]="⚠️  No .env config file detected; will use current shell env vars only"
+    [using_image]="📦 Image: %s"
+    [using_image_with_profile]="📦 Image: %s (profile: %s)"
+    [mode_persistent_home]="🏠 Mode: Persistent Home (keeps tool configs, completions, command history)"
+    [mode_ephemeral_home]="🧊 Mode: Ephemeral Home (clean environment, safe from pollution)"
+    [mount_readonly_count]="🟡 Risk: Read-only mounts (%s dirs mounted read-only to %s/)"
+    [mount_writable_count]="🔴 Risk: Mapped (%s dirs mounted to %s/)"
+    [mount_detail_ro]="  → %s (read-only)"
+    [mount_detail_rw]="  → %s (read-write)"
+    [risk_iso_persistent]="🟢 Risk: Isolated (no host dirs mounted, persistent home has config-tamper risk)"
+    [risk_iso_ephemeral]="🟢 Risk: Isolated (fully isolated, ephemeral)"
+    [risk_docker_escape]="☠️  Risk: Container escape (docker.sock mounted = host root, full control over host Docker)"
+    [dry_run_header]="\n🔍 Dry-run mode, actual command to be executed:"
+    [starting]="🐳 Spinning up AI Agent Docker environment..."
+)
+
+# 消息查找函数：msg <key> [args...] —— 按 CURRENT_LANG 取消息，支持 %s 占位符替换
+msg() {
+    local key="$1"; shift
+    local template
+    if [[ "$CURRENT_LANG" == "en" ]]; then
+        template="${MSG_EN[$key]:-}"
+    else
+        template="${MSG_ZH[$key]:-}"
+    fi
+    if [[ $# -gt 0 ]]; then
+        # shellcheck disable=SC2059  # 模板里的 %s 占位符是故意的
+        printf "$template\n" "$@"
+    else
+        # shellcheck disable=SC2059  # 模板里可能含 \n 等转义，需 printf 解析
+        printf "$template\n"
+    fi
+}
+
 # ─── 函数 ───────────────────────────────────────────────
 
 print_help() {
-    cat <<'EOF'
+    if [[ "$CURRENT_LANG" == "en" ]]; then
+        cat <<'EOF'
+dkagent - Unified AI Agent Docker launcher
+
+Usage:
+  dkagent [options] [agent] [extra args...]
+
+Agents:
+  claude        Start Claude Code
+  gemini        Start Gemini CLI
+  pi            Start Pi Coding Agent
+  codex         Start OpenAI Codex
+  opencode      Start OpenCode
+  (empty)       Enter an interactive zsh shell
+
+Options:
+  -p, --profile NAME     🎚️ Select image profile (default: kali)
+                         Built-in: kali (full toolkit), slim (minimal Debian)
+                         Add custom profiles in ~/.config/dkagent/profiles
+  --image NAME           🐳 Specify any Docker image name (overrides --profile)
+  -e, --ephemeral        🧊 Use a temporary home dir (no configs/history kept, safer)
+  -m, --mount DIR        📁 Mount a host dir to /home/kali/workspace/<basename>
+                         Repeatable: -m ./a -m ./b
+                         Space-separated: -m "./a ./b"
+  -r, --readonly         🔒 Place right after -m to mount that dir read-only
+  --no-mount             🟢 Mount nothing (cannot touch host files at all, safest)
+  --docker-socket        🐋 Mount host docker.sock so the container can run docker
+                         ⚠️ Highest risk: equivalent to handing host root to the container
+  --env FILE             Specify a particular .env file path
+  --lang zh|en           Set the UI language (default: auto-detect from $LANG/$LC_ALL)
+  --dry-run              Print the docker run command without actually starting
+  -h, --help             Show this help and safety warnings
+
+Image priority: --image > --profile > env var DKAGENT_PROFILE > default (kali)
+
+Risk levels (⚠ choose carefully):
+  Determined by mount mode × home persistence:
+
+  🟢 Isolated     : --no-mount + -e  (fully isolated, ephemeral)
+  🟢 Low risk     : --no-mount       (host files isolated, persistent home has config-tamper risk)
+  🟢 Low risk     : all read-only + -e (read-only, leaves no trace on exit)
+  🟡 Med-low risk : all read-only    (read-only, but persistent home has config-tamper risk)
+  🟡 Medium risk  : has writable + -e (can act on mounts, leaves no trace on exit)
+  🔴 High risk    : has writable     (can act on mounts + persistent home can plant backdoors)
+  ☠️ Escape level : --docker-socket  (docker.sock = host root, overrides all tiers above)
+
+Examples:
+  dkagent                                    # mount cwd to workspace/<basename>
+  dkagent claude                             # mount cwd and launch Claude
+  dkagent -e claude                          # 🧊 ephemeral home + mount cwd
+  dkagent -m ./project-a -m ./project-b      # mount multiple dirs
+  dkagent -m ./original -r -m ./copy claude  # original read-only, copy writable
+  dkagent --no-mount                         # 🟢 mount nothing
+  dkagent --env ~/custom.env                 # use a custom .env file
+  dkagent -p slim claude                     # 🎚️ run Claude with the slim image
+  dkagent --image my-custom-agent claude     # 🐳 use any custom image
+  dkagent --docker-socket claude             # 🐋 docker usable inside (⚠️ highest risk)
+EOF
+    else
+        cat <<'EOF'
 dkagent - AI Agent Docker 统一运行入口
 
 用法:
@@ -91,6 +260,7 @@ Agent 名称:
   --docker-socket        🐋 挂载宿主 docker.sock，让容器内可运行 docker 命令
                          ⚠️ 最高风险：等同把宿主机 root 权限交给容器
   --env FILE             指定特定的 .env 文件路径
+  --lang zh|en           设置界面语言（默认：根据 $LANG/$LC_ALL 自动识别）
   --dry-run              仅打印 docker run 命令而不实际启动容器
   -h, --help             显示此帮助信息及安全警告
 
@@ -119,6 +289,7 @@ Agent 名称:
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
   dkagent --docker-socket claude             # 🐋 容器内可用 docker（⚠️ 最高风险）
 EOF
+    fi
 }
 
 find_env_file() {
@@ -174,9 +345,17 @@ while [[ $# -gt 0 ]]; do
             print_help
             exit 0
             ;;
+        --lang)
+            if [[ $# -lt 2 ]]; then
+                msg err_opt_needs_arg "--lang" >&2
+                exit 1
+            fi
+            CURRENT_LANG="$2"
+            shift 2
+            ;;
         -p|--profile)
             if [[ $# -lt 2 ]]; then
-                echo "❌ 错误: -p/--profile 选项需要提供 profile 名称！" >&2
+                msg err_opt_needs_arg "-p/--profile" >&2
                 exit 1
             fi
             SELECTED_PROFILE="$2"
@@ -184,7 +363,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --image)
             if [[ $# -lt 2 ]]; then
-                echo "❌ 错误: --image 选项需要提供镜像名称！" >&2
+                msg err_opt_needs_arg "--image" >&2
                 exit 1
             fi
             CUSTOM_IMAGE="$2"
@@ -196,7 +375,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         -m|--mount)
             if [[ $# -lt 2 ]]; then
-                echo "❌ 错误: -m/--mount 选项需要提供目录参数！" >&2
+                msg err_opt_needs_arg "-m/--mount" >&2
                 exit 1
             fi
             MOUNT_MODE="CUSTOM"
@@ -208,14 +387,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         -r|--readonly)
             if [[ ${#MOUNT_DIRS[@]} -eq 0 ]]; then
-                echo "❌ 错误: -r/--readonly 必须跟在 -m 之后使用！" >&2
+                msg err_readonly_no_mount >&2
                 exit 1
             fi
             # 将最后一个元素的 :rw 改为 :ro
             last_idx=$(( ${#MOUNT_DIRS[@]} - 1 ))
             last_entry="${MOUNT_DIRS[$last_idx]}"
             if [[ "$last_entry" != *":rw" ]]; then
-                echo "❌ 错误: -r/--readonly 只能对可读写目录使用！" >&2
+                msg err_readonly_not_writable >&2
                 exit 1
             fi
             MOUNT_DIRS[$last_idx]="${last_entry%:rw}:ro"
@@ -228,7 +407,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --env)
             if [[ $# -lt 2 ]]; then
-                echo "❌ 错误: --env 选项需要提供文件路径！" >&2
+                msg err_opt_needs_arg "--env" >&2
                 exit 1
             fi
             CUSTOM_ENV="$2"
@@ -243,8 +422,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -*)
-            echo "❌ 未知选项: $1" >&2
-            echo "请运行 'dkagent --help' 查看可用选项" >&2
+            msg err_unknown_opt "$1" >&2
+            msg err_see_help >&2
             exit 1
             ;;
         *)
@@ -260,7 +439,7 @@ done
 
 if [[ -n "$CUSTOM_ENV" ]]; then
     if [[ ! -f "$CUSTOM_ENV" ]]; then
-        echo "❌ 指定的 .env 文件不存在: $CUSTOM_ENV" >&2
+        msg err_env_not_exist "$CUSTOM_ENV" >&2
         exit 1
     fi
     ENV_FILE="$CUSTOM_ENV"
@@ -273,10 +452,10 @@ else
 fi
 
 if [[ -n "$ENV_FILE" ]]; then
-    echo "📋 使用配置文件: $ENV_FILE"
+    msg using_env_file "$ENV_FILE"
     build_env_args "$ENV_FILE"
 else
-    echo "⚠️  未检测到任何 .env 配置文件，将仅使用当前终端的环境变量" >&2
+    msg no_env_file >&2
     build_env_args ""
 fi
 
@@ -300,25 +479,29 @@ else
     # 确定 profile 名: --profile > 环境变量 > 默认
     EFFECTIVE_PROFILE="${SELECTED_PROFILE:-${DKAGENT_PROFILE:-$DEFAULT_PROFILE}}"
     if [[ -z "${PROFILE_IMAGES[$EFFECTIVE_PROFILE]:-}" ]]; then
-        echo "❌ 错误: 未知的 profile '$EFFECTIVE_PROFILE'。" >&2
-        echo "可用 profile: ${!PROFILE_IMAGES[*]}" >&2
-        echo "提示: 可通过 --image <镜像名> 直接指定任意镜像，或在 ~/.config/dkagent/profiles 添加自定义 profile。" >&2
+        msg err_profile_unknown "$EFFECTIVE_PROFILE" >&2
+        msg err_profile_available "${!PROFILE_IMAGES[*]}" >&2
+        msg err_profile_hint >&2
         exit 1
     fi
     DOCKER_IMAGE="${PROFILE_IMAGES[$EFFECTIVE_PROFILE]}"
 fi
 
-echo "📦 使用镜像: $DOCKER_IMAGE${EFFECTIVE_PROFILE:+ (profile: $EFFECTIVE_PROFILE)}"
+if [[ -n "$EFFECTIVE_PROFILE" ]]; then
+    msg using_image_with_profile "$DOCKER_IMAGE" "$EFFECTIVE_PROFILE"
+else
+    msg using_image "$DOCKER_IMAGE"
+fi
 
 # ─── 检查 Docker 镜像是否存在 ─────────────────────────────
 
 if ! docker image inspect "$DOCKER_IMAGE" &>/dev/null; then
-    echo "❌ 错误: 本地找不到 Docker 镜像 '$DOCKER_IMAGE'。" >&2
-    echo "请先构建该镜像。内置 profile 的构建方式:" >&2
-    echo "  kali  → 在项目主目录运行 'docker compose build'" >&2
-    echo "  slim  → 运行 'docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .'" >&2
+    msg err_image_not_found "$DOCKER_IMAGE" >&2
+    msg err_image_build_hint >&2
+    msg err_image_build_kali >&2
+    msg err_image_build_slim >&2
     if [[ -n "$EFFECTIVE_PROFILE" && "$EFFECTIVE_PROFILE" != "kali" && "$EFFECTIVE_PROFILE" != "slim" ]]; then
-        echo "  '$EFFECTIVE_PROFILE' 是自定义 profile，请用对应方式构建镜像 '$DOCKER_IMAGE'。" >&2
+        msg err_image_build_custom "$EFFECTIVE_PROFILE" "$DOCKER_IMAGE" >&2
     fi
     exit 1
 fi
@@ -332,9 +515,9 @@ DOCKER_ARGS=(
 # 1. 挂载 Home 卷 (持久化 vs 临时)
 if [[ "$USE_PERSISTENT_HOME" == true ]]; then
     DOCKER_ARGS+=("-v" "${HOME_VOLUME}:/home/kali")
-    echo "🏠 模式: 持久化 Home (保留工具配置、自动补全及命令历史)"
+    msg mode_persistent_home
 else
-    echo "🧊 模式: 临时 Home (纯净环境，安全无污染)"
+    msg mode_ephemeral_home
 fi
 
 # 2. 挂载工作目录及工作目录设定
@@ -350,7 +533,7 @@ for entry in "${MOUNT_DIRS[@]}"; do
     dir_path="${entry%:*}"
     base_name="$(basename "$dir_path")"
     if [[ -n "${SEEN_BASENAMES[$base_name]:-}" ]]; then
-        echo "❌ 错误: 目录名冲突！多个路径的 basename 均为 '${base_name}':" >&2
+        msg err_basename_conflict "$base_name" >&2
         echo "  - ${SEEN_BASENAMES[$base_name]}" >&2
         echo "  - ${dir_path}" >&2
         exit 1
@@ -375,7 +558,7 @@ if [[ ${#MOUNT_DIRS[@]} -gt 0 ]]; then
         access="${entry##*:}"
         base_name="$(basename "$dir_path")"
         if [[ ! -d "$dir_path" ]]; then
-            echo "❌ 错误: 指定的挂载目录不存在: $dir_path" >&2
+            msg err_dir_not_exist "$dir_path" >&2
             exit 1
         fi
         abs_path="$(cd "$dir_path" 2>/dev/null && pwd)"
@@ -404,8 +587,8 @@ if [[ "$ENABLE_DOCKER" == true ]]; then
     [[ -z "$DOCKER_SOCK" ]] && DOCKER_SOCK="/var/run/docker.sock"
     # 校验 sock 存在
     if [[ ! -S "$DOCKER_SOCK" ]]; then
-        echo "❌ 错误: --docker-socket 找不到 docker socket: $DOCKER_SOCK" >&2
-        echo "提示: 可通过 DKAGENT_DOCKER_SOCK 环境变量指定 sock 路径" >&2
+        msg err_docker_sock_not_found "$DOCKER_SOCK" >&2
+        msg err_docker_sock_hint >&2
         exit 1
     fi
     DOCKER_ARGS+=("-v" "${DOCKER_SOCK}:/var/run/docker.sock")
@@ -430,34 +613,34 @@ done
 
 if [[ ${#MOUNT_DIRS[@]} -eq 0 ]]; then
     if [[ "$USE_PERSISTENT_HOME" == true ]]; then
-        echo "🟢 安全风险: 隔离级别 (未挂载任何宿主机目录，持久化 home 有配置被改风险)"
+        msg risk_iso_persistent
     else
-        echo "🟢 安全风险: 隔离级别 (完全隔离，用完即焚)"
+        msg risk_iso_ephemeral
     fi
 elif [[ "$HAS_WRITABLE" == false ]]; then
-    echo "🟡 安全风险: 只读挂载 (${#MOUNT_DIRS[@]} 个目录以只读方式挂载到 ${CONTAINER_WORKSPACE}/)"
+    msg mount_readonly_count "${#MOUNT_DIRS[@]}" "$CONTAINER_WORKSPACE"
     for entry in "${MOUNT_DIRS[@]}"; do
         dir_path="${entry%:*}"
         abs_path="$(cd "$dir_path" 2>/dev/null && pwd)"
-        echo "  → ${abs_path} (只读)"
+        msg mount_detail_ro "$abs_path"
     done
 else
-    echo "🔴 安全风险: 映射级别 (${#MOUNT_DIRS[@]} 个目录挂载到 ${CONTAINER_WORKSPACE}/)"
+    msg mount_writable_count "${#MOUNT_DIRS[@]}" "$CONTAINER_WORKSPACE"
     for entry in "${MOUNT_DIRS[@]}"; do
         dir_path="${entry%:*}"
         access="${entry##*:}"
         abs_path="$(cd "$dir_path" 2>/dev/null && pwd)"
         if [[ "$access" == "ro" ]]; then
-            echo "  → ${abs_path} (只读)"
+            msg mount_detail_ro "$abs_path"
         else
-            echo "  → ${abs_path} (可读写)"
+            msg mount_detail_rw "$abs_path"
         fi
     done
 fi
 
 # docker.sock 挂载是无条件最高风险（等同宿主 root），叠加警示
 if [[ "$ENABLE_DOCKER" == true ]]; then
-    echo "☠️  安全风险: 容器逃逸级别 (已挂载 docker.sock = 宿主机 root，容器内可完全控制宿主 Docker)"
+    msg risk_docker_escape
 fi
 
 # 4. 塞入环境变量参数
@@ -486,11 +669,11 @@ fi
 # ─── 执行 ───────────────────────────────────────────────
 
 if [[ "$DRY_RUN" == true ]]; then
-    echo -e "\n🔍 Dry-run 模式，实际执行命令如下:"
+    msg dry_run_header
     printf '%q ' "${DOCKER_ARGS[@]}"
     echo -e "\n"
     exit 0
 fi
 
-echo "🐳 正在拉起 AI Agent Docker 运行环境..."
+msg starting
 exec "${DOCKER_ARGS[@]}"
