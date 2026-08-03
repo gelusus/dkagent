@@ -22,10 +22,10 @@ dkagent 本质上就是**一个 ~500 行的 bash 脚本**，不包含任何自�
 
 部分 AI Agent（如 Claude Code、Codex）开始提供自带沙箱。它们的模型通常是"系统级可读、按需放开可写"，单目录、单 agent 场景很好用。dkagent 解决的是另外几个问题：
 
-**1. 逐目录独立读写控制 —— 自带沙箱做不到这种粒度**
-你可以同时挂载多个目录，每个目录独立控制读写权限：
+**1. 逐目录读写控制在内核层强制 —— 而非应用层规则**
+Claude Code / Codex 的自带沙箱也能做逐目录控制（Claude 的 `permissions.deny`、Codex 的 `--add-dir`），但它们的规则在**应用层**匹配，理论上可被绕过（如 Claude Code 的 deny 规则有[执行 bug](https://github.com/anthropics/claude-code/issues/6631)）。dkagent 用 Docker bind mount 把读写权限钉在**内核层**——`:ro` 挂载就是物理只读，Agent 再怎么努力也写不进去：
 ```bash
-# 原始项目只读参考（绝对改不了），副本目录可读写
+# 原始项目只读参考（内核强制，Agent 写不进去），副本目录可读写
 dkagent -m ./original -r -m ./workspace/my-copy claude
 ```
 这让"参考 A 项目代码、改 B 项目"这种真实场景成为可能 —— Agent 能读你的共享库，但绝不会误改它。
