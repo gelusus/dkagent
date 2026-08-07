@@ -228,6 +228,40 @@ LANG=en_US.UTF-8 dkagent --help   # auto-detected English
 
 ---
 
+## Remote sessions & reconnect after disconnect
+
+When you SSH into a physical machine to run an Agent, you'll often hit the **running session is lost after the terminal disconnects** problem — network blips, closing your laptop, switching networks all drop SSH.
+
+dkagent **wraps with tmux by default** (when the host has tmux installed) to solve this at the root:
+
+- **First run** `dkagent claude`: automatically launches the Agent inside a tmux session named `dkagent-<cwd basename>`
+- **SSH drops**: the tmux server runs on the physical machine and is unaffected — the Agent process keeps running
+- **After reconnect**: run `dkagent claude` again in the same directory (or manually `tmux attach -t dkagent-<dirname>`) to resume the original session
+
+```bash
+# First SSH connection
+ssh user@host
+cd ~/project-a
+dkagent claude            # auto-enters tmux session dkagent-project-a
+
+# SSH dropped, reconnect
+ssh user@host
+cd ~/project-a
+dkagent claude            # attaches right back to the original session, Agent still running
+```
+
+The session name defaults to the working directory (different projects are naturally isolated), and can be customized with `--tmux-name NAME` or the `DKAGENT_TMUX_SESSION` env var.
+
+**Disabling tmux wrapping**:
+
+```bash
+dkagent --no-tmux claude            # disable for this run, run docker directly
+```
+
+> 💡 **Design trade-off**: tmux wrapping happens at the host layer (not inside the container). The container remains `--rm` one-shot — no long-running service processes, zero extra resource overhead. The session is automatically destroyed when the Agent exits normally.
+
+---
+
 ## Command-line usage
 
 ### Basic structure
@@ -275,6 +309,8 @@ dkagent --docker-socket claude
 | `-r, --readonly` | 🔒 Place right after `-m` to mount that directory read-only |
 | `--no-mount` | 🟢 Mount no host directories (safest) |
 | `--docker-socket` | 🐋 Mount host docker.sock so the container can run docker (⚠️ **highest risk, equals host root**) |
+| `--no-tmux` | 🔌 Disable host tmux wrapping (SSH reconnect won't resume the session) |
+| `--tmux-name NAME` | 🔌 Custom tmux session name (default `dkagent-<cwd basename>`) |
 | `--env FILE` | Manually specify the `.env` config file |
 | `--lang zh\|en` | 🌐 Set the UI language (default: auto-detect from `$LANG`/`$LC_ALL`) |
 | `--dry-run` | 🔍 Print the `docker run` command without actually starting |

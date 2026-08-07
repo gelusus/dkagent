@@ -228,6 +228,40 @@ LANG=en_US.UTF-8 dkagent --help   # 自动识别为英文
 
 ---
 
+## 远程会话与断线重连
+
+SSH 连接物理机运行 Agent 时，经常会遇到**终端断开后正在跑的会话丢失**——网络抖动、笔记本合盖、切换网络都会断 SSH。
+
+dkagent **默认自动用 tmux 包装**（宿主机装了 tmux 时），从根本上解决这个问题：
+
+- **首次运行** `dkagent claude`：自动在 tmux 会话 `dkagent-<当前目录名>` 里拉起 Agent
+- **SSH 断线**：tmux server 跑在物理机上不受影响，Agent 进程继续跑
+- **重连后**：在同一目录再次 `dkagent claude`（或手动 `tmux attach -t dkagent-<目录名>`），直接接回原会话
+
+```bash
+# 第一次 SSH 连上
+ssh user@host
+cd ~/project-a
+dkagent claude            # 自动进入 tmux 会话 dkagent-project-a
+
+# SSH 断了，重新连上
+ssh user@host
+cd ~/project-a
+dkagent claude            # 直接 attach 回原来的会话，Agent 还在跑
+```
+
+会话名默认按工作目录区分（不同项目天然隔离），可用 `--tmux-name NAME` 或环境变量 `DKAGENT_TMUX_SESSION` 自定义。
+
+**关闭 tmux 包装**：
+
+```bash
+dkagent --no-tmux claude            # 本次禁用，直接 docker run
+```
+
+> 💡 **设计取舍**：tmux 包装在宿主机层（不是容器内），容器仍是 `--rm` 一次性，不引入长期运行的服务进程，零额外资源占用。Agent 正常退出后会话自动销毁。
+
+---
+
 ## 命令行使用说明
 
 ### 基础命令结构
@@ -275,6 +309,8 @@ dkagent --docker-socket claude
 | `-r, --readonly` | 🔒 紧跟 `-m` 之后，将前一个目录以只读方式挂载 |
 | `--no-mount` | 🟢 不挂载任何宿主机目录（最安全） |
 | `--docker-socket` | 🐋 挂载宿主 docker.sock，容器内可运行 docker 命令（⚠️ **最高风险，等同宿主 root**） |
+| `--no-tmux` | 🔌 禁用宿主机 tmux 包装（SSH 断线后无法重连当前会话） |
+| `--tmux-name NAME` | 🔌 自定义 tmux 会话名（默认 `dkagent-<当前目录名>`） |
 | `--env FILE` | 手动指定 `.env` 配置文件 |
 | `--lang zh\|en` | 🌐 设置界面语言（默认：根据 `$LANG`/`$LC_ALL` 自动识别） |
 | `--dry-run` | 🔍 仅打印将要执行的 `docker run` 命令，不实际启动 |
