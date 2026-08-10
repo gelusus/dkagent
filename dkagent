@@ -113,8 +113,9 @@ declare -A MSG_ZH=(
     [risk_docker_escape]="☠️  安全风险: 容器逃逸级别 (已挂载 docker.sock = 宿主机 root，容器内可完全控制宿主 Docker)"
     [dry_run_header]="\n🔍 Dry-run 模式，实际执行命令如下:"
     [starting]="🐳 正在拉起 AI Agent Docker 运行环境..."
-    [tmux_wrapping]="🔌 已自动启用 tmux 会话 '%s'（SSH 断线重连：再次运行 dkagent，或手动 \`tmux attach -t %s\`）"
-    [tmux_no_tmux]="ℹ️  --no-tmux 已禁用宿主机 tmux 包装（断线无法重连当前会话）"
+    [tmux_wrapping]="🔌 已创建 tmux 会话 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
+    [tmux_wrapping_renamed]="🔌 会话名 '%s' 已被占用，改用 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
+    [tmux_no_tmux]="ℹ️  --no-tmux 已禁用宿主机 tmux 包装（SSH 断线进程会丢失）"
 )
 
 # 消息表：英文
@@ -152,8 +153,9 @@ declare -A MSG_EN=(
     [risk_docker_escape]="☠️  Risk: Container escape (docker.sock mounted = host root, full control over host Docker)"
     [dry_run_header]="\n🔍 Dry-run mode, actual command to be executed:"
     [starting]="🐳 Spinning up AI Agent Docker environment..."
-    [tmux_wrapping]="🔌 Auto-enabled tmux session '%s' (SSH reconnect: re-run dkagent, or \`tmux attach -t %s\`)"
-    [tmux_no_tmux]="ℹ️  --no-tmux: host tmux wrapping disabled (cannot reconnect to current session after disconnect)"
+    [tmux_wrapping]="🔌 Created tmux session '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
+    [tmux_wrapping_renamed]="🔌 Session name '%s' taken, using '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
+    [tmux_no_tmux]="ℹ️  --no-tmux: host tmux wrapping disabled (SSH disconnect loses the process)"
 )
 
 # 消息查找函数：msg <key> [args...] —— 按 CURRENT_LANG 取消息，支持 %s 占位符替换
@@ -205,8 +207,9 @@ Options:
   --no-mount             🟢 Mount nothing (cannot touch host files at all, safest)
   --docker-socket        🐋 Mount host docker.sock so the container can run docker
                          ⚠️ Highest risk: equivalent to handing host root to the container
-  --no-tmux              🔌 Disable host tmux wrapping (SSH reconnect won't resume session)
+  --no-tmux              🔌 Disable host tmux wrapping (SSH disconnect loses the process)
   --tmux-name NAME       🔌 Custom tmux session name (default: dkagent-<cwd basename>)
+                         Duplicate names get a _2, _3... suffix; reconnect with tmux attach
   --env FILE             Specify a particular .env file path
   --lang zh|en           Set the UI language (default: auto-detect from $LANG/$LC_ALL)
   --dry-run              Print the docker run command without actually starting
@@ -267,8 +270,9 @@ Agent 名称:
   --no-mount             🟢 不挂载任何工作目录（完全无法触碰宿主机文件，最安全）
   --docker-socket        🐋 挂载宿主 docker.sock，让容器内可运行 docker 命令
                          ⚠️ 最高风险：等同把宿主机 root 权限交给容器
-  --no-tmux              🔌 禁用宿主机 tmux 包装（SSH 断线后无法重连当前会话）
+  --no-tmux              🔌 禁用宿主机 tmux 包装（SSH 断线进程会丢失）
   --tmux-name NAME       🔌 自定义 tmux 会话名（默认: dkagent-<当前目录名>）
+                         重名时自动加 _2、_3... 后缀；重连用 tmux attach
   --env FILE             指定特定的 .env 文件路径
   --lang zh|en           设置界面语言（默认：根据 $LANG/$LC_ALL 自动识别）
   --dry-run              仅打印 docker run 命令而不实际启动容器
@@ -350,7 +354,7 @@ EXTRA_ARGS=()
 CUSTOM_IMAGE=""     # --image 指定的镜像名（最高优先级）
 SELECTED_PROFILE="" # --profile 指定的 profile 名
 ENABLE_DOCKER=false # --docker-socket: 挂载宿主 docker.sock，让容器内可运行 docker 命令
-# tmux 包装（默认开启：SSH 断线重连用）；保存原始 argv 供 tmux 重入使用
+# tmux 包装（默认开启：SSH 断线后进程保留，手动 tmux attach 重连）；保存原始 argv 供内层重入使用
 ORIGINAL_ARGV=("$@")
 ENABLE_TMUX=true    # 默认开启宿主机 tmux 包装（--no-tmux 关闭）
 TMUX_SESSION=""     # 自定义 tmux 会话名（空 = 自动按工作目录命名为 dkagent-<basename>）
@@ -465,7 +469,7 @@ done
 
 # ─── tmux 包装（远程 SSH 会话断线重连）──────────────────
 # 宿主机层包装：tmux server 跑在宿主机，SSH 断线不影响，docker 进程继续跑。
-# 重连后再次 `dkagent`（同目录）会直接 attach 到原会话，恢复之前的工作。
+# 每次运行都新建独立 session；断线重连由用户手动 `tmux attach -t <name>` 完成。
 # 放在参数解析后、.env/镜像检测前：外层 dkagent 只负责包装，配置信息由 tmux 内层打印一次。
 # 条件：开启 + 非 dry-run + 不在 tmux 内(避免嵌套) + 非递归重入 + 是 tty + 宿主机装了 tmux
 if [[ "$ENABLE_TMUX" == true \
@@ -477,18 +481,31 @@ if [[ "$ENABLE_TMUX" == true \
     # 会话名优先级: --tmux-name > $DKAGENT_TMUX_SESSION > dkagent-<当前目录名>
     TMUX_SESSION_NAME="${TMUX_SESSION:-${DKAGENT_TMUX_SESSION:-dkagent-$(basename "$PWD")}}"
     # tmux 把 ':' 和 '.' 当作 target 分隔符（session:window.pane），会静默替换成 '_'
-    # 这会导致含这两个字符的目录名（如 project.bak / project:v2）在重连时找不到会话。
-    # 主动替换，确保 new-session -A 的幂等性（重连必命中同名会话）。
+    # 这会导致含这两个字符的目录名（如 project.bak / project:v2）在 attach 时找不到会话。
+    # 主动替换，确保会话名合法。
     TMUX_SESSION_NAME="${TMUX_SESSION_NAME//[:.]/_}"
-    msg tmux_wrapping "$TMUX_SESSION_NAME" "$TMUX_SESSION_NAME"
+    # 重名处理：同名 session 已存在时自动加序号后缀（_2 _3 ...），避免串台/报错
+    FINAL_NAME="$TMUX_SESSION_NAME"
+    n=2
+    while tmux has-session -t "$FINAL_NAME" 2>/dev/null; do
+        FINAL_NAME="${TMUX_SESSION_NAME}_${n}"
+        n=$((n+1))
+    done
+    if [[ "$FINAL_NAME" != "$TMUX_SESSION_NAME" ]]; then
+        msg tmux_wrapping_renamed "$TMUX_SESSION_NAME" "$FINAL_NAME" "$FINAL_NAME"
+    else
+        msg tmux_wrapping "$FINAL_NAME" "$FINAL_NAME"
+    fi
     # 用 %q 安全转义每个参数（tmux 经 sh -c 重新解析命令行，转义可防参数错切/注入）
     QUOTED_ARGV=()
     for arg in "${ORIGINAL_ARGV[@]}"; do
         QUOTED_ARGV+=("$(printf '%q' "$arg")")
     done
-    # new -A: 会话不存在就建并跑命令；已存在就 attach（忽略命令）→ 幂等重连
+    # new-session（无 -A）+ -c "$PWD"：
+    #   - -c "$PWD" 强制 pane cwd = 调用者 cwd，修复内层 $(pwd) 取错目录的 bug
+    #   - 不用 -A，每次新建独立 session；重连由用户手动 `tmux attach -t <name>`
     # 哨兵 DKAGENT_TMUX_GUARD 防递归；--no-tmux 跳过二次包装
-    exec tmux new-session -A -s "$TMUX_SESSION_NAME" \
+    exec tmux new-session -s "$FINAL_NAME" -c "$PWD" \
         env DKAGENT_TMUX_GUARD=1 \
         dkagent --no-tmux "${QUOTED_ARGV[@]}"
 fi
