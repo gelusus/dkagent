@@ -10,7 +10,7 @@ A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Cl
 
 ## Design philosophy: simple, with safety delegated to Docker
 
-dkagent is essentially **a ~500-line bash script** with no self-rolled sandbox logic. It does exactly one thing: **orchestrate Docker's existing isolation into a usable command line**.
+dkagent is essentially **a ~750-line bash script** with no self-rolled sandbox logic. It does exactly one thing: **orchestrate Docker's existing isolation into a usable command line**.
 
 - **Safety = Docker itself**: Container isolation relies on Docker's native namespace / cgroup / bind-mount — kernel mechanisms proven in production for a decade. dkagent doesn't reinvent them; it just calls them.
 - **Risk level = what you mount**: Every 🟢🟡🔴 tier maps directly to the scope of mounted volumes, with no hidden logic. `--dry-run` shows you the full `docker run` command before execution — what you see is what you get.
@@ -234,20 +234,20 @@ When you SSH into a physical machine to run an Agent, you'll often hit the **run
 
 dkagent **wraps with tmux by default** (when the host has tmux installed) to solve this at the root:
 
-- **First run** `dkagent claude`: automatically launches the Agent inside a tmux session named `dkagent-<cwd basename>`
+- **Running** `dkagent claude`: launches the Agent inside a tmux session named `dkagent-<cwd basename>`. **Every run creates a fresh, independent session** (duplicate names get a `_2`, `_3`… suffix — no cross-talk)
 - **SSH drops**: the tmux server runs on the physical machine and is unaffected — the Agent process keeps running
-- **After reconnect**: run `dkagent claude` again in the same directory (or manually `tmux attach -t dkagent-<dirname>`) to resume the original session
+- **Manual reconnect**: `tmux attach -t dkagent-<dirname>` resumes the original session (note: re-running `dkagent` starts a NEW session, it does not attach)
 
 ```bash
 # First SSH connection
 ssh user@host
 cd ~/project-a
-dkagent claude            # auto-enters tmux session dkagent-project-a
+dkagent claude            # creates tmux session dkagent-project-a, Agent runs inside
 
 # SSH dropped, reconnect
 ssh user@host
-cd ~/project-a
-dkagent claude            # attaches right back to the original session, Agent still running
+tmux attach -t dkagent-project-a   # manually resume the original session, Agent still running
+# (running `dkagent claude` again here would create a NEW session dkagent-project-a_2)
 ```
 
 The session name defaults to the working directory (different projects are naturally isolated), and can be customized with `--tmux-name NAME` or the `DKAGENT_TMUX_SESSION` env var.
@@ -309,8 +309,8 @@ dkagent --docker-socket claude
 | `-r, --readonly` | 🔒 Place right after `-m` to mount that directory read-only |
 | `--no-mount` | 🟢 Mount no host directories (safest) |
 | `--docker-socket` | 🐋 Mount host docker.sock so the container can run docker (⚠️ **highest risk, equals host root**) |
-| `--no-tmux` | 🔌 Disable host tmux wrapping (SSH reconnect won't resume the session) |
-| `--tmux-name NAME` | 🔌 Custom tmux session name (default `dkagent-<cwd basename>`) |
+| `--no-tmux` | 🔌 Disable host tmux wrapping (SSH disconnect loses the process) |
+| `--tmux-name NAME` | 🔌 Custom tmux session name (default `dkagent-<cwd basename>`; duplicates get `_2`/`_3` suffix) |
 | `--env FILE` | Manually specify the `.env` config file |
 | `--lang zh\|en` | 🌐 Set the UI language (default: auto-detect from `$LANG`/`$LC_ALL`) |
 | `--dry-run` | 🔍 Print the `docker run` command without actually starting |
@@ -353,7 +353,7 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 ├── docker-compose.yaml      # three alternative compose run modes
 ├── install.sh               # one-shot install/uninstall script
 ├── .env.example             # API keys config template
-└── workspace/               # preset work dir for sandbox mode
+└── workspace/               # work dir for sandbox mode (auto-created by Docker on first compose run)
 ```
 
 ---
