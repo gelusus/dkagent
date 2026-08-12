@@ -1,0 +1,20 @@
+# dkagent-sync - 用于跨机同步持久化卷的轻量辅助镜像
+#
+# 仅包含 rsync + openssh-client，约 14MB。
+# 配合 `dkagent sync push/pull` 子命令使用，承担：
+#   - 本地端：作为 rsync 客户端容器，挂载持久化卷为 /data:ro（防误写）
+#   - 远端端：由 --rsync-path 启动，挂载持久化卷为 /data（可写）
+#
+# 构建:
+#   docker build -t dkagent-sync -f dockerfiles/Dockerfile.sync .
+#
+# 也可用 heredoc 内联构建（无需本仓库源码）:
+#   docker build -t dkagent-sync - <<'EOF'
+#   FROM alpine:latest
+#   RUN apk add --no-cache rsync openssh-client
+#   ENTRYPOINT ["rsync"]
+#   EOF
+
+FROM alpine:latest
+RUN apk add --no-cache rsync openssh-client
+ENTRYPOINT ["rsync"]

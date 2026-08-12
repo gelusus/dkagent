@@ -260,6 +260,110 @@ dkagent --no-tmux claude            # disable for this run, run docker directly
 
 > 💡 **Design trade-off**: tmux wrapping happens at the host layer (not inside the container). The container remains `--rm` one-shot — no long-running service processes, zero extra resource overhead. The session is automatically destroyed when the Agent exits normally.
 
+> 💡 **Container naming**: each container is named `dkagent-<basename($PWD)>` by default (same style as tmux session names; duplicate names get `_2`, `_3`... suffixes), so you can identify which project a container belongs to in `docker ps`. On multi-user systems or when the project name is sensitive, set `DKAGENT_NO_CONTAINER_NAME=1` to disable naming (fall back to Docker's random names), or `DKAGENT_CONTAINER_NAME=xxx` to customize.
+
+---
+
+## Multi-machine handoff sync
+
+If you have multiple machines (e.g. desktop + laptop) and want to hand off dkagent's working state to another machine, the `dkagent sync` subcommand syncs the persistent volume and project directory to a peer. **Purely manual — running `dkagent claude` and similar commands never triggers sync.**
+
+### Prerequisites (once on each machine)
+
+1. Install Docker + dkagent
+2. Configure SSH key-based authentication between the two machines
+3. Build the `dkagent-sync` helper image (~14 MB, used for cross-host rsync):
+
+   ```bash
+   docker build -t dkagent-sync -f dockerfiles/Dockerfile.sync .
+   ```
+
+   > On Windows + WSL2 + Docker Desktop, if you hit a `docker-credential-desktop.exe` error, bypass it with: `docker --config /tmp/empty-docker-cfg build -t dkagent-sync -f dockerfiles/Dockerfile.sync .`
+
+4. Create the peers config file `~/.config/dkagent/peers` listing remote machines:
+
+   ```
+   # One peer per line: alias=ssh://user@host:port
+   laptop=ssh://user@laptop.local:22
+   desktop=ssh://user@desktop.local:22
+   ```
+
+   > [!WARNING]
+   > This file contains SSH URLs — recommended permission 600: `chmod 600 ~/.config/dkagent/peers`
+
+### Basic usage
+
+```bash
+# Show peers + mapping for current dir
+dkagent sync list
+
+# First-time sync of current project dir to a peer (--remote-path required, auto-saved to mapping)
+cd ~/my-project
+dkagent sync push laptop --remote-path ~/my-project
+
+# Subsequent syncs (auto-use saved mapping)
+dkagent sync push laptop
+
+# Reverse direction (peer → local)
+dkagent sync pull laptop
+
+# Preview only, no actual changes (no confirmation needed)
+dkagent sync push laptop --dry-run
+
+# Pass-through rsync args (e.g. protect .git / .env)
+dkagent sync push laptop -- --exclude=.git/ --exclude=.env
+```
+
+### Default behavior
+
+Each `dkagent sync push/pull` syncs by default:
+
+1. **Persistent volume** `agent_docker_kali-home` (same name on both ends) — tool configs / shell history / Agent credentials / Claude session
+2. **Current project directory** (if a mapping exists; skipped if no mapping and no `--remote-path` given)
+
+**Persistent volume uses nested containers** (rsync over ssh + `--rsync-path`, so the remote rsync process also runs inside a container with the volume mounted). **Project dir uses direct rsync over ssh** (faster).
+
+Default rsync flags (mandatory in practice):
+- `-az --delete --numeric-ids` — archive + compress + delete remote-only + preserve uid/gid numerically
+- `--partial --partial-dir=.rsync-partial` — resumable transfers (keep half-done files across retries)
+- ssh `ServerAliveInterval=30 ServerAliveCountMax=20` — long-link keepalive tolerance
+- Built-in 10-attempt retry loop (30s sleep between attempts)
+
+> [!CAUTION]
+> **`--delete` is ON by default**: remote-only files will be removed to keep the mirror consistent. **Before the first sync, strongly recommended to add `--dry-run` to see what gets deleted** — especially `.env` API keys, `.git/` history, and any remote-only work.
+
+### Options
+
+| Option | Effect |
+| :--- | :--- |
+| `--remote-path PATH` | Specify remote project dir on first run; auto-saved to mapping |
+| `--no-volume` | Skip persistent volume, sync project dir only |
+| `--no-project` | Skip project dir, sync persistent volume only |
+| `--dry-run` | Preview only, no actual sync (no confirmation needed) |
+| `-y` / `--yes` | Skip preview and run directly |
+| `--retries N` | Max retry attempts (default 10) |
+| `-- RSYNC_ARGS` | Pass-through to underlying rsync |
+
+### Config files
+
+| File | Purpose | Format |
+| :--- | :--- | :--- |
+| `~/.config/dkagent/peers` | Peer list | `alias=ssh://user@host:port` |
+| `~/.config/dkagent/sync-mapping` | Project path mapping | `local-path<TAB>peer<TAB>remote-path` |
+
+Both are plain text and can be edited with `vi`. The `sync-mapping` file is managed automatically (written on first `--remote-path` use), but manual edits are fully supported.
+
+### Performance characteristics
+
+- **First full sync**: depends on bandwidth (persistent volume size varies with usage duration). rsync + `--partial` supports resume — broken transfers pick up where they left off, no progress lost.
+- **Subsequent incremental syncs**: rsync's delta algorithm sends only changed parts. Day-to-day handoffs typically transfer just a few MB (session logs `.jsonl`, `.zsh_history`, small config changes).
+
+### Troubleshooting
+
+- **`dkagent-sync` image missing**: the error message includes the build command — copy and run it (required on both ends)
+- **Frequent SSH disconnects**: common on cross-network / cross-ocean links. The built-in 10-retry + resumable transfer handles this; use `--retries 20` for more attempts
+- **dry-run output contains API keys**: dry-run prints the full `docker run` command including `.env` keys. **Mask them before sharing the output**
+
 ---
 
 ## Command-line usage
@@ -346,10 +450,11 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 
 ```
 .
-├── dkagent                  # core bash CLI (arg parsing, mounts, risk printing)
+├── dkagent                  # core bash CLI (arg parsing, mounts, risk printing, sync subcommand)
 ├── Dockerfile               # default profile (kali) build config
 ├── dockerfiles/
-│   └── Dockerfile.slim      # slim profile build config (minimal Debian)
+│   ├── Dockerfile.slim      # slim profile build config (minimal Debian)
+│   └── Dockerfile.sync      # dkagent-sync image (rsync + ssh, for cross-host sync)
 ├── docker-compose.yaml      # three alternative compose run modes
 ├── install.sh               # one-shot install/uninstall script
 ├── .env.example             # API keys config template
@@ -365,6 +470,8 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 - [x] Multiple image profiles
 - [x] Run Docker inside the container (`--docker-socket`)
 - [x] Bilingual UI (Chinese / English) with auto-detection
+- [x] Container naming by current dir (duplicate names get `_2`/`_3` suffix; disable with `DKAGENT_NO_CONTAINER_NAME=1`)
+- [x] **Multi-machine handoff sync** (`dkagent sync push/pull`, manual-only, rsync + retry + resumable)
 - [ ] **Network isolation tiers** (`--net off` / `--net strict` — simple and fit for multi-agent scenarios)
 
 ---

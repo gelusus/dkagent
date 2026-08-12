@@ -260,6 +260,110 @@ dkagent --no-tmux claude            # 本次禁用，直接 docker run
 
 > 💡 **设计取舍**：tmux 包装在宿主机层（不是容器内），容器仍是 `--rm` 一次性，不引入长期运行的服务进程，零额外资源占用。Agent 正常退出后会话自动销毁。
 
+> 💡 **容器命名**：每次启动容器默认命名为 `dkagent-<basename($PWD)>`（跟 tmux 会话名风格一致，重名自动加 `_2` `_3` 后缀），方便你在 `docker ps` 中识别是哪个项目。多用户系统或项目名敏感时，可用环境变量 `DKAGENT_NO_CONTAINER_NAME=1` 禁用命名（回到 Docker 随机名），或 `DKAGENT_CONTAINER_NAME=xxx` 自定义。
+
+---
+
+## 多机接力同步
+
+如果你有多台电脑（如台式机 + 笔记本），想把 dkagent 的工作状态接力到另一台机继续干——`dkagent sync` 子命令把持久化卷和项目目录同步到对端。**完全手动触发，`dkagent claude` 等命令绝不会自动同步**。
+
+### 准备工作（两端各做一次）
+
+1. 装 Docker + dkagent
+2. 配好 SSH 免密登录（key auth）
+3. 构建 dkagent-sync 辅助镜像（约 14MB，承担跨机 rsync 传输）：
+
+   ```bash
+   docker build -t dkagent-sync -f dockerfiles/Dockerfile.sync .
+   ```
+
+   > Windows + WSL2 + Docker Desktop 若报 `docker-credential-desktop.exe` 错误，绕开：`docker --config /tmp/empty-docker-cfg build -t dkagent-sync -f dockerfiles/Dockerfile.sync .`
+
+4. 创建 peers 配置文件 `~/.config/dkagent/peers`，列出对端机器：
+
+   ```
+   # 每行: alias=ssh://user@host:port
+   laptop=ssh://user@laptop.local:22
+   desktop=ssh://user@desktop.local:22
+   ```
+
+   > [!WARNING]
+   > 该文件含 SSH URL，建议设权限 600：`chmod 600 ~/.config/dkagent/peers`
+
+### 基本用法
+
+```bash
+# 看 peers + 当前目录的映射
+dkagent sync list
+
+# 首次同步当前项目目录到 peer（--remote-path 必填，自动存映射）
+cd ~/my-project
+dkagent sync push laptop --remote-path ~/my-project
+
+# 后续同步（自动用已存的映射）
+dkagent sync push laptop
+
+# 反向同步（peer → 本地）
+dkagent sync pull laptop
+
+# 只想看会改什么，不实跑（不改数据，不需要确认）
+dkagent sync push laptop --dry-run
+
+# 透传 rsync 参数（如保护 .git / .env）
+dkagent sync push laptop -- --exclude=.git/ --exclude=.env
+```
+
+### 默认行为
+
+每次 `dkagent sync push/pull` 默认同步：
+
+1. **持久化卷** `agent_docker_kali-home`（两端同名）—— 工具配置 / 命令历史 / Agent 凭证 / Claude session 全套
+2. **当前项目目录**（如有映射；无映射且未指定 `--remote-path` 则跳过）
+
+**持久化卷走容器嵌套**（rsync over ssh + `--rsync-path`，让远端 rsync 进程也跑在挂了卷的容器里），**项目目录走直连 rsync over ssh**（更快）。
+
+默认 rsync flags（实测得出的"必须项"）：
+- `-az --delete --numeric-ids` 归档 + 压缩 + 删除远端独有 + 保留 uid/gid 数字
+- `--partial --partial-dir=.rsync-partial` 断点续传（断网接着传，半成品保留）
+- ssh `ServerAliveInterval=30 ServerAliveCountMax=20` 长链路 keepalive 容忍
+- 内置 10 次重试循环（每次失败间隔 30 秒）
+
+> [!CAUTION]
+> **`--delete` 默认开启**：远端独有的文件会被删除以维持镜像一致。**首次同步前强烈建议加 `--dry-run` 看会删什么**——特别留意 `.env` API keys、`.git/` 历史、远端独有工作。
+
+### 选项速查
+
+| 选项 | 作用 |
+| :--- | :--- |
+| `--remote-path PATH` | 首次指定远端项目目录路径，自动存入映射 |
+| `--no-volume` | 跳过持久化卷，只同步项目目录 |
+| `--no-project` | 跳过项目目录，只同步持久化卷 |
+| `--dry-run` | 仅预览不实跑（不改数据，不需要确认） |
+| `-y` / `--yes` | 跳过预览直接执行 |
+| `--retries N` | 重试次数（默认 10） |
+| `-- RSYNC_ARGS` | 透传给底层 rsync |
+
+### 配置文件
+
+| 文件 | 作用 | 格式 |
+| :--- | :--- | :--- |
+| `~/.config/dkagent/peers` | peer 列表 | `alias=ssh://user@host:port` |
+| `~/.config/dkagent/sync-mapping` | 项目路径映射 | `local-path<TAB>peer<TAB>remote-path` |
+
+两者都是纯文本，可直接 `vi` 编辑。`sync-mapping` 由脚本自动管理（首次 `--remote-path` 时写入），但手动编辑也完全合法。
+
+### 性能特征
+
+- **首次全量同步**：取决于带宽（持久化卷大小因使用时长而异）。rsync + `--partial` 支持断点续传，断了重试接着传，不丢进度。
+- **后续增量同步**：rsync 增量算法只传变化部分。日常接力时实际传输量通常只有几 MB（会话日志 `.jsonl`、`.zsh_history`、配置小改）。
+
+### 排查常见问题
+
+- **`dkagent-sync` 镜像不存在**：错误提示会给出构建命令，复制即跑（两端都要构建）
+- **ssh 频繁断连**：跨网/跨海链路常见。内置 10 次重试 + 断点续传能正常工作；需要更多重试用 `--retries 20`
+- **dry-run 输出含 API key**：dry-run 会打印完整 `docker run` 命令，含 `.env` 里的 keys。**分享输出前请打码**
+
 ---
 
 ## 命令行使用说明
@@ -346,10 +450,11 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 
 ```
 .
-├── dkagent                  # 核心 bash CLI（参数解析、挂载、风险打印）
+├── dkagent                  # 核心 bash CLI（参数解析、挂载、风险打印、sync 子命令）
 ├── Dockerfile               # 默认 profile (kali) 构建配置
 ├── dockerfiles/
-│   └── Dockerfile.slim      # slim profile 构建配置（精简 Debian）
+│   ├── Dockerfile.slim      # slim profile 构建配置（精简 Debian）
+│   └── Dockerfile.sync      # dkagent-sync 镜像（rsync + ssh，跨机同步用）
 ├── docker-compose.yaml      # 备用的三种 compose 运行模式
 ├── install.sh               # 一键安装/卸载脚本
 ├── .env.example             # API Keys 配置模板
@@ -365,6 +470,8 @@ DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
 - [x] 多镜像 profile 切换
 - [x] 容器内运行 Docker（`--docker-socket`）
 - [x] 中英文双语界面（自动识别）
+- [x] 容器命名按当前目录（重名 `_2` `_3` 后缀；`DKAGENT_NO_CONTAINER_NAME=1` 禁用）
+- [x] **多机接力同步**（`dkagent sync push/pull`，纯手动，rsync + 重试 + 断点续传）
 - [ ] **网络隔离档位**（`--net off` / `--net strict`，简单易用，契合多 agent 场景）
 
 ---

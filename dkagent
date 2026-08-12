@@ -29,6 +29,9 @@ declare -A PROFILE_IMAGES=(
 CONTAINER_WORKSPACE="/home/kali/workspace"
 HOME_VOLUME="agent_docker_kali-home"
 
+# sync 子命令相关常量（纯手动触发，与 docker run 主流程完全隔离）
+SYNC_IMAGE="dkagent-sync"
+
 # .env 文件搜索路径
 ENV_SEARCH_PATHS=(
     "${DKAGENT_ENV:-}"                             # 1. 环境变量指定的路径
@@ -41,6 +44,13 @@ PROFILE_CONF_PATHS=(
     "$HOME/.config/dkagent/profiles"              # 1. XDG 风格全局配置
     "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/profiles" # 2. 脚本所在目录
 )
+
+# sync 子命令配置文件路径
+SYNC_PEERS_PATHS=(
+    "$HOME/.config/dkagent/peers"                 # 1. peers: alias=ssh://user@host:port
+    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/peers-sync" # 2. 脚本所在目录（备用）
+)
+SYNC_MAPPING_PATH="$HOME/.config/dkagent/sync-mapping"  # 项目路径映射表（脚本自动管理 + 可 vi 编辑）
 
 # 加载自定义 profile（覆盖/追加到内置 PROFILE_IMAGES）
 load_custom_profiles() {
@@ -113,9 +123,39 @@ declare -A MSG_ZH=(
     [risk_docker_escape]="☠️  安全风险: 容器逃逸级别 (已挂载 docker.sock = 宿主机 root，容器内可完全控制宿主 Docker)"
     [dry_run_header]="\n🔍 Dry-run 模式，实际执行命令如下:"
     [starting]="🐳 正在拉起 AI Agent Docker 运行环境..."
+    [container_name_set]="🏷️  容器名: %s"
+    [container_name_renamed]="🏷️  容器名 '%s' 已被占用，改用 '%s'"
     [tmux_wrapping]="🔌 已创建 tmux 会话 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_wrapping_renamed]="🔌 会话名 '%s' 已被占用，改用 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_no_tmux]="ℹ️  --no-tmux 已禁用宿主机 tmux 包装（SSH 断线进程会丢失）"
+    # ── sync 子命令（纯手动，绝不与 docker run/tmux 耦合）──
+    [sync_unknown_action]="❌ 错误: 未知的 sync 子命令: %s"
+    [err_sync_peer_required]="❌ 错误: 缺少 peer 别名。用法: dkagent sync push <peer>"
+    [err_sync_unexpected_arg]="❌ 错误: 多余的参数: %s"
+    [err_sync_invalid_port]="❌ 错误: peer URL 的端口不是数字: '%s'（疑似配置错误或被篡改）"
+    [err_sync_invalid_retries]="❌ 错误: --retries 必须是数字: '%s'"
+    [sync_no_peers_file]="⚠️  未找到 peers 配置文件。请创建 %s，格式: alias=ssh://user@host:port"
+    [sync_no_peer]="❌ 错误: peer '%s' 未在配置中找到。可用 peers: %s"
+    [sync_no_mapping_skip]="ℹ️  当前目录无 sync 映射，且未指定 --remote-path，跳过项目目录同步"
+    [sync_remote_path_added]="📝 已记录映射: %s → [%s] %s"
+    [sync_no_image]="❌ 错误: 找不到 Docker 镜像 '%s'（持久化卷同步必需）"
+    [sync_image_build_hint]="构建命令: docker build -t %s -f dockerfiles/Dockerfile.sync ."
+    [sync_attempt]="🔄 第 %s/%s 次尝试..."
+    [sync_attempt_failed]="❌ 失败，%s 秒后重试"
+    [sync_attempt_success]="✅ 第 %s 次成功"
+    [sync_volume_pushing]="📦 同步持久化卷 %s → %s（push）"
+    [sync_volume_pulling]="📦 同步持久化卷 %s ← %s（pull）"
+    [sync_dir_pushing]="📁 同步项目目录 %s → %s:%s"
+    [sync_dir_pulling]="📁 同步项目目录 %s ← %s:%s"
+    [sync_dryrun_intro]="🔍 Dry-run 预览（不实际执行）:"
+    [sync_confirm_prompt]="⚠️  确认执行实际同步？（--delete 默认开启，远端独有文件会被删除，建议首次先 --dry-run 检查）[y/N] "
+    [sync_aborted]="ℹ️  已取消"
+    [sync_done]="🎉 同步完成"
+    [sync_no_volume_no_project]="❌ 错误: --no-volume 和 --no-project 不能同时使用（无任何同步目标）"
+    [sync_listing_peers]="📡 已配置的 peers:"
+    [sync_listing_mapping_cwd]="🗺️  当前目录的映射:"
+    [sync_no_peers_configured]="（无 peer 配置）"
+    [sync_no_mapping_for_cwd]="（当前目录无映射）"
 )
 
 # 消息表：英文
@@ -153,9 +193,39 @@ declare -A MSG_EN=(
     [risk_docker_escape]="☠️  Risk: Container escape (docker.sock mounted = host root, full control over host Docker)"
     [dry_run_header]="\n🔍 Dry-run mode, actual command to be executed:"
     [starting]="🐳 Spinning up AI Agent Docker environment..."
+    [container_name_set]="🏷️  Container name: %s"
+    [container_name_renamed]="🏷️  Container name '%s' taken, using '%s'"
     [tmux_wrapping]="🔌 Created tmux session '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_wrapping_renamed]="🔌 Session name '%s' taken, using '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_no_tmux]="ℹ️  --no-tmux: host tmux wrapping disabled (SSH disconnect loses the process)"
+    # ── sync subcommand (purely manual, never coupled with docker run/tmux) ──
+    [sync_unknown_action]="❌ Error: Unknown sync subcommand: %s"
+    [err_sync_peer_required]="❌ Error: peer alias required. Usage: dkagent sync push <peer>"
+    [err_sync_unexpected_arg]="❌ Error: Unexpected argument: %s"
+    [err_sync_invalid_port]="❌ Error: peer URL port is not numeric: '%s' (possible config error or tampering)"
+    [err_sync_invalid_retries]="❌ Error: --retries must be a number: '%s'"
+    [sync_no_peers_file]="⚠️  No peers config file found. Create %s with format: alias=ssh://user@host:port"
+    [sync_no_peer]="❌ Error: peer '%s' not in config. Available peers: %s"
+    [sync_no_mapping_skip]="ℹ️  No sync mapping for current dir and no --remote-path given, skipping project dir sync"
+    [sync_remote_path_added]="📝 Mapping saved: %s → [%s] %s"
+    [sync_no_image]="❌ Error: Docker image '%s' not found (required for persistent volume sync)"
+    [sync_image_build_hint]="Build command: docker build -t %s -f dockerfiles/Dockerfile.sync ."
+    [sync_attempt]="🔄 Attempt %s/%s..."
+    [sync_attempt_failed]="❌ Failed, retrying in %s seconds"
+    [sync_attempt_success]="✅ Succeeded on attempt %s"
+    [sync_volume_pushing]="📦 Syncing volume %s → %s (push)"
+    [sync_volume_pulling]="📦 Syncing volume %s ← %s (pull)"
+    [sync_dir_pushing]="📁 Syncing project dir %s → %s:%s"
+    [sync_dir_pulling]="📁 Syncing project dir %s ← %s:%s"
+    [sync_dryrun_intro]="🔍 Dry-run preview (no actual changes):"
+    [sync_confirm_prompt]="⚠️  Proceed with sync? (--delete is ON by default, remote-only files will be removed. Consider --dry-run first) [y/N] "
+    [sync_aborted]="ℹ️  Aborted"
+    [sync_done]="🎉 Sync complete"
+    [sync_no_volume_no_project]="❌ Error: --no-volume and --no-project cannot be used together (nothing to sync)"
+    [sync_listing_peers]="📡 Configured peers:"
+    [sync_listing_mapping_cwd]="🗺️  Mapping for current dir:"
+    [sync_no_peers_configured]="(no peers configured)"
+    [sync_no_mapping_for_cwd]="(no mapping for current dir)"
 )
 
 # 消息查找函数：msg <key> [args...] —— 按 CURRENT_LANG 取消息，支持 %s 占位符替换
@@ -308,6 +378,83 @@ EOF
     fi
 }
 
+# ─── sync 子命令：帮助文本 ──────────────────────────────
+print_sync_help() {
+    if [[ "$CURRENT_LANG" == "en" ]]; then
+        cat <<'EOF'
+dkagent sync - Multi-machine handoff (purely manual, never auto-coupled)
+
+Usage:
+  dkagent sync push <peer> [options] [-- RSYNC_ARGS...]
+  dkagent sync pull <peer> [options] [-- RSYNC_ARGS...]
+  dkagent sync list
+
+Subcommands:
+  push <peer>      Sync persistent volume + current project dir → peer
+  pull <peer>      Sync persistent volume + current project dir ← peer
+  list             Show configured peers and mapping for cwd
+
+Options:
+  --remote-path PATH    Specify remote project dir (first run); saved to mapping
+  --no-volume           Skip persistent volume sync
+  --no-project          Skip current project dir sync
+  --yes / -y            Skip dry-run preview and confirmation
+  --dry-run             Dry-run only, do not actually sync
+  --retries N           Max retry attempts (default: 10)
+  -- RSYNC_ARGS...      Pass-through to rsync (e.g. -- --exclude=.git/)
+
+Config files (manually editable):
+  ~/.config/dkagent/peers           alias=ssh://user@host:port
+  ~/.config/dkagent/sync-mapping    local-path<TAB>peer<TAB>remote-path
+
+Note: sync is purely manual. It NEVER triggers when running `dkagent claude` etc.
+
+Examples:
+  dkagent sync push laptop                                     # default: volume + cwd
+  dkagent sync push laptop --remote-path ~/projects/myproject   # first run, save mapping
+  dkagent sync push laptop --no-project -y                     # volume only, no preview
+  dkagent sync pull laptop                                     # reverse direction
+  dkagent sync list
+EOF
+    else
+        cat <<'EOF'
+dkagent sync - 多机接力同步（纯手动，绝不自动耦合）
+
+用法:
+  dkagent sync push <peer> [选项] [-- RSYNC_ARGS...]
+  dkagent sync pull <peer> [选项] [-- RSYNC_ARGS...]
+  dkagent sync list
+
+子命令:
+  push <peer>      同步 持久化卷 + 当前项目目录 → peer
+  pull <peer>      同步 持久化卷 + 当前项目目录 ← peer
+  list             显示已配置的 peers 和当前目录的映射
+
+选项:
+  --remote-path PATH    指定远端项目目录路径（首次必填，自动存入映射）
+  --no-volume           跳过持久化卷同步
+  --no-project          跳过当前项目目录同步
+  --yes / -y            跳过 dry-run 预览和确认
+  --dry-run             仅预览，不实际同步
+  --retries N           最大重试次数（默认: 10）
+  -- RSYNC_ARGS...      透传给 rsync（如 -- --exclude=.git/）
+
+配置文件（可手动 vi 编辑）:
+  ~/.config/dkagent/peers           alias=ssh://user@host:port
+  ~/.config/dkagent/sync-mapping    本地路径<TAB>peer别名<TAB>远端路径
+
+注意：sync 完全手动触发，运行 `dkagent claude` 等命令时绝不会自动同步。
+
+示例:
+  dkagent sync push laptop                                     # 默认: 卷 + 当前目录
+  dkagent sync push laptop --remote-path ~/projects/myproject   # 首次指定，存映射
+  dkagent sync push laptop --no-project -y                     # 仅卷，跳过预览
+  dkagent sync pull laptop                                     # 反向
+  dkagent sync list
+EOF
+    fi
+}
+
 find_env_file() {
     for path in "${ENV_SEARCH_PATHS[@]}"; do
         if [[ -n "$path" && -f "$path" ]]; then
@@ -340,6 +487,390 @@ build_env_args() {
         fi
     done
 }
+
+# ─── sync 子命令实现（独立、纯手动，绝不耦合 docker run / tmux）────────────
+# 设计原则（实测得出）：
+#   - 完全手动触发，绝不与 dkagent claude 等容器命令耦合
+#   - 遵循 rsync 设计哲学：不设默认 exclude / backup，要保护自己加 -- --exclude=...
+#   - 默认显示"将要做什么" + 用户确认（除非 --yes）
+#   - 内置重试循环（实测：太平洋链路单次同步可能要 4-8 次重试才连上）
+#   - 必带 --partial --partial-dir=.rsync-partial（断点续传，跨海链路必需）
+#   - ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=20（10 分钟 keepalive 容忍）
+
+# peers 关联数组：alias → ssh://user@host:port
+declare -A SYNC_PEERS=()
+
+# 加载 peers 配置（仿 load_custom_profiles 模式）
+load_sync_peers() {
+    SYNC_PEERS=()
+    local path name url line
+    for path in "${SYNC_PEERS_PATHS[@]}"; do
+        [[ -z "$path" || ! -f "$path" ]] && continue
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+            line="${line#"${line%%[![:space:]]*}"}"
+            if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_-]*= ]]; then
+                name="${line%%=*}"
+                url="${line#*=}"
+                SYNC_PEERS["$name"]="$url"
+            fi
+        done < "$path"
+    done
+}
+
+# 解析 ssh://user@host:port → 设置全局 SYNC_USER/SYNC_HOST/SYNC_PORT
+parse_ssh_url() {
+    local url="$1" user rest host port
+    [[ "$url" == ssh://* ]] && url="${url#ssh://}"
+    user="${url%%@*}"
+    rest="${url#*@}"
+    if [[ "$rest" == *:* ]]; then
+        host="${rest%%:*}"
+        port="${rest##*:}"
+    else
+        host="$rest"
+        port="22"
+    fi
+    # 如果 url 不含 @，user 会等于整个 url，回退到当前用户
+    [[ -z "$user" || "$user" == "$url" ]] && user="${USER:-$(whoami)}"
+    # 安全校验：port 必须是纯数字（防 peers 文件被篡改后注入 ssh 命令）
+    if [[ ! "$port" =~ ^[0-9]+$ ]]; then
+        msg err_sync_invalid_port "$port" >&2
+        exit 1
+    fi
+    SYNC_USER="$user"
+    SYNC_HOST="$host"
+    SYNC_PORT="$port"
+}
+
+# 查找当前目录到 peer 的映射，输出 remote-path，找不到返回 1
+find_sync_mapping() {
+    local peer="$1" cwd="$PWD" local_path m_peer remote_path
+    [[ ! -f "$SYNC_MAPPING_PATH" ]] && return 1
+    while IFS=$'\t' read -r local_path m_peer remote_path; do
+        [[ -z "$local_path" || "$local_path" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$local_path" == "$cwd" && "$m_peer" == "$peer" ]]; then
+            echo "$remote_path"
+            return 0
+        fi
+    done < "$SYNC_MAPPING_PATH"
+    return 1
+}
+
+# 添加/更新映射（同 local_path + peer 视为更新）
+save_sync_mapping() {
+    local local_path="$1" peer="$2" remote_path="$3" tmp
+    mkdir -p "$(dirname "$SYNC_MAPPING_PATH")"
+    if [[ ! -f "$SYNC_MAPPING_PATH" ]]; then
+        cat > "$SYNC_MAPPING_PATH" <<'HEADER'
+# dkagent sync 项目路径映射表（脚本自动管理 + 可手动 vi 编辑）
+# 格式: <本地路径><TAB><peer别名><TAB><远端路径>
+HEADER
+    fi
+    # 移除已存在的同名映射（同 local_path + peer），再追加
+    tmp="$(mktemp)"
+    awk -F'\t' -v lp="$local_path" -v p="$peer" \
+        '$1 != lp || $2 != p' "$SYNC_MAPPING_PATH" > "$tmp" 2>/dev/null || true
+    printf '%s\t%s\t%s\n' "$local_path" "$peer" "$remote_path" >> "$tmp"
+    mv "$tmp" "$SYNC_MAPPING_PATH"
+}
+
+# 检查 dkagent-sync 镜像是否存在（持久化卷同步必需）
+check_sync_image() {
+    if ! docker image inspect "$SYNC_IMAGE" &>/dev/null; then
+        msg sync_no_image "$SYNC_IMAGE" >&2
+        msg sync_image_build_hint "$SYNC_IMAGE" >&2
+        return 1
+    fi
+    return 0
+}
+
+# 持久化卷同步（容器嵌套 rsync over ssh）
+# 用法: sync_volume <direction> <user> <host> <port> <local_vol> <remote_vol> <retries> <dry>
+sync_volume() {
+    local direction="$1" user="$2" host="$3" port="$4"
+    local local_vol="$5" remote_vol="$6" retries="${7:-10}" dry="${8:-false}"
+    local ssh_opts="-p ${port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+    local base_args=(-az --delete --numeric-ids --partial --partial-dir=.rsync-partial --stats)
+    if [[ "$dry" == true ]]; then
+        base_args+=(--dry-run -i)
+        retries=1  # dry-run 不重试，断了直接报错
+    fi
+
+    local local_mount remote_rsync_path src dst
+    if [[ "$direction" == "push" ]]; then
+        # push: 本地只读 /data:ro 防误写，远端可写
+        local_mount="${local_vol}:/data:ro"
+        remote_rsync_path="docker run --rm -i -v ${remote_vol}:/data ${SYNC_IMAGE}"
+        src="/data/"
+        dst="${user}@${host}:/data/"
+    else  # pull: 本地可写，远端只读 /data:ro
+        local_mount="${local_vol}:/data"
+        remote_rsync_path="docker run --rm -i -v ${remote_vol}:/data:ro ${SYNC_IMAGE}"
+        src="${user}@${host}:/data/"
+        dst="/data/"
+    fi
+
+    local attempt
+    for attempt in $(seq 1 "$retries"); do
+        [[ "$dry" == false ]] && msg sync_attempt "$attempt" "$retries"
+        if docker run --rm -i \
+            -v "$local_mount" \
+            -v "$HOME/.ssh:/root/.ssh:ro" \
+            ${SSH_AUTH_SOCK:+-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e SSH_AUTH_SOCK} \
+            "$SYNC_IMAGE" \
+            "${base_args[@]}" \
+            -e "ssh $ssh_opts" \
+            --rsync-path="$remote_rsync_path" \
+            "$src" "$dst"; then
+            [[ "$dry" == false ]] && msg sync_attempt_success "$attempt"
+            return 0
+        else
+            if [[ "$dry" == true ]]; then
+                return 1
+            fi
+            msg sync_attempt_failed "30"
+            sleep 30
+        fi
+    done
+    return 1
+}
+
+# 项目目录同步（直连 rsync over ssh，不走容器）
+# 用法: sync_dir <direction> <user> <host> <port> <local_dir> <remote_dir> <retries> <dry>
+sync_dir() {
+    local direction="$1" user="$2" host="$3" port="$4"
+    local local_dir="$5" remote_dir="$6" retries="${7:-10}" dry="${8:-false}"
+    local ssh_opts="-p ${port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
+    local base_args=(-az --delete --numeric-ids --partial --partial-dir=.rsync-partial --stats)
+    if [[ "$dry" == true ]]; then
+        base_args+=(--dry-run -i)
+        retries=1
+    fi
+
+    local src dst
+    if [[ "$direction" == "push" ]]; then
+        src="${local_dir}/"
+        dst="${user}@${host}:${remote_dir}/"
+    else
+        src="${user}@${host}:${remote_dir}/"
+        dst="${local_dir}/"
+    fi
+
+    local attempt
+    for attempt in $(seq 1 "$retries"); do
+        [[ "$dry" == false ]] && msg sync_attempt "$attempt" "$retries"
+        if rsync "${base_args[@]}" \
+            -e "ssh $ssh_opts" \
+            "$src" "$dst"; then
+            [[ "$dry" == false ]] && msg sync_attempt_success "$attempt"
+            return 0
+        else
+            if [[ "$dry" == true ]]; then
+                return 1
+            fi
+            msg sync_attempt_failed "30"
+            sleep 30
+        fi
+    done
+    return 1
+}
+
+# sync list 子命令（可选传 peer 过滤映射）
+dkagent_sync_list() {
+    if [[ $# -gt 1 ]]; then
+        msg err_sync_unexpected_arg "$2" >&2
+        exit 1
+    fi
+    local peer_filter="${1:-}"
+    load_sync_peers
+    msg sync_listing_peers
+    if [[ ${#SYNC_PEERS[@]} -eq 0 ]]; then
+        echo "  $(msg sync_no_peers_configured)"
+    else
+        local name
+        for name in "${!SYNC_PEERS[@]}"; do
+            printf "  %-15s\t%s\n" "$name" "${SYNC_PEERS[$name]}"
+        done | sort
+    fi
+    echo ""
+    msg sync_listing_mapping_cwd
+    # 列出当前目录的所有映射（可指定 peer 过滤）；修复：无 peer 参数时也能正确列出
+    local found=false local_path m_peer remote_path
+    if [[ -f "$SYNC_MAPPING_PATH" ]]; then
+        while IFS=$'\t' read -r local_path m_peer remote_path; do
+            [[ -z "$local_path" || "$local_path" =~ ^[[:space:]]*# ]] && continue
+            if [[ "$local_path" == "$PWD" && ( -z "$peer_filter" || "$m_peer" == "$peer_filter" ) ]]; then
+                printf "  %s\t→ [%s] %s\n" "$PWD" "$m_peer" "$remote_path"
+                found=true
+            fi
+        done < "$SYNC_MAPPING_PATH"
+    fi
+    [[ "$found" == false ]] && echo "  $(msg sync_no_mapping_for_cwd)"
+}
+
+# sync push/pull 总入口
+dkagent_sync_xfer() {
+    local direction="$1"; shift
+    local peer_alias="" remote_path_opt="" no_volume=false no_project=false
+    local assume_yes=false dry_run_only=false retries=10
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --remote-path)
+                [[ $# -lt 2 ]] && { msg err_opt_needs_arg "--remote-path" >&2; exit 1; }
+                remote_path_opt="$2"; shift 2 ;;
+            --no-volume)    no_volume=true; shift ;;
+            --no-project)   no_project=true; shift ;;
+            -y|--yes)       assume_yes=true; shift ;;
+            --dry-run)      dry_run_only=true; shift ;;
+            --retries)
+                [[ $# -lt 2 ]] && { msg err_opt_needs_arg "--retries" >&2; exit 1; }
+                if [[ ! "$2" =~ ^[0-9]+$ ]]; then
+                    msg err_sync_invalid_retries "$2" >&2
+                    exit 1
+                fi
+                retries="$2"; shift 2 ;;
+            -h|--help)      print_sync_help; exit 0 ;;
+            -*)
+                msg err_unknown_opt "$1" >&2; exit 1 ;;
+            *)
+                # 第一个非 flag 参数是 peer 别名
+                if [[ -z "$peer_alias" ]]; then
+                    peer_alias="$1"
+                else
+                    msg err_sync_unexpected_arg "$1" >&2; exit 1
+                fi
+                shift ;;
+        esac
+    done
+
+    if [[ -z "$peer_alias" ]]; then
+        msg err_sync_peer_required >&2
+        exit 1
+    fi
+    if [[ "$no_volume" == true && "$no_project" == true ]]; then
+        msg sync_no_volume_no_project >&2
+        exit 1
+    fi
+
+    # 加载 peers 配置
+    load_sync_peers
+    if [[ ${#SYNC_PEERS[@]} -eq 0 ]]; then
+        msg sync_no_peers_file "${SYNC_PEERS_PATHS[0]}" >&2
+        exit 1
+    fi
+    if [[ -z "${SYNC_PEERS[$peer_alias]:-}" ]]; then
+        msg sync_no_peer "$peer_alias" "${!SYNC_PEERS[*]}" >&2
+        exit 1
+    fi
+
+    # 解析 peer URL → SYNC_USER/SYNC_HOST/SYNC_PORT
+    parse_ssh_url "${SYNC_PEERS[$peer_alias]}"
+
+    # 项目目录同步的 remote 路径解析
+    local local_dir="$PWD" remote_dir="" skip_project="$no_project"
+    if [[ "$skip_project" == false ]]; then
+        if [[ -n "$remote_path_opt" ]]; then
+            remote_dir="$remote_path_opt"
+            save_sync_mapping "$local_dir" "$peer_alias" "$remote_dir"
+            msg sync_remote_path_added "$local_dir" "$peer_alias" "$remote_dir"
+        elif remote_dir="$(find_sync_mapping "$peer_alias")"; then
+            : # 找到映射，直接用
+        else
+            msg sync_no_mapping_skip >&2
+            skip_project=true
+        fi
+    fi
+
+    # 决定实际操作
+    local will_volume=false will_dir=false
+    [[ "$no_volume" == false ]] && will_volume=true
+    [[ "$skip_project" == false && -n "$remote_dir" ]] && will_dir=true
+
+    # 显示预览 + 确认（除非 --yes 或 --dry-run）
+    # --dry-run 模式：直接跑 dry-run（不修改数据，不需要确认）
+    if [[ "$dry_run_only" == true ]]; then
+        msg sync_dryrun_intro
+        if [[ "$will_volume" == true ]]; then
+            check_sync_image || exit 1
+            sync_volume "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
+                "$HOME_VOLUME" "$HOME_VOLUME" 1 true || true
+        fi
+        if [[ "$will_dir" == true ]]; then
+            sync_dir "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
+                "$local_dir" "$remote_dir" 1 true || true
+        fi
+        exit 0
+    fi
+
+    if [[ "$assume_yes" == false ]]; then
+        echo ""
+        if [[ "$will_volume" == true ]]; then
+            if [[ "$direction" == "push" ]]; then
+                msg sync_volume_pushing "$HOME_VOLUME" "${SYNC_USER}@${SYNC_HOST}"
+            else
+                msg sync_volume_pulling "$HOME_VOLUME" "${SYNC_USER}@${SYNC_HOST}"
+            fi
+        fi
+        if [[ "$will_dir" == true ]]; then
+            if [[ "$direction" == "push" ]]; then
+                msg sync_dir_pushing "$local_dir" "${SYNC_USER}@${SYNC_HOST}" "$remote_dir"
+            else
+                msg sync_dir_pulling "$local_dir" "${SYNC_USER}@${SYNC_HOST}" "$remote_dir"
+            fi
+        fi
+        echo ""
+        msg sync_confirm_prompt
+        local response
+        read -r response || true
+        if [[ ! "$response" =~ ^[Yy]$ ]]; then
+            msg sync_aborted
+            exit 0
+        fi
+    fi
+
+    # 实际同步（带重试循环）
+    if [[ "$will_volume" == true ]]; then
+        check_sync_image || exit 1
+        sync_volume "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
+            "$HOME_VOLUME" "$HOME_VOLUME" "$retries" false || exit 1
+    fi
+
+    if [[ "$will_dir" == true ]]; then
+        sync_dir "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
+            "$local_dir" "$remote_dir" "$retries" false || exit 1
+    fi
+
+    msg sync_done
+}
+
+# ─── sync 子命令路由（必须在主参数解析 while 循环之前）────────────────────
+# 完全绕开 tmux 块（470 行）和 docker run 主流程（759 行）。sync 是纯本地配置/网络操作。
+if [[ "${1:-}" == "sync" ]]; then
+    shift
+    SYNC_ACTION="${1:-}"
+    [[ -n "$SYNC_ACTION" ]] && shift
+    case "$SYNC_ACTION" in
+        push|pull)
+            dkagent_sync_xfer "$SYNC_ACTION" "$@"
+            exit 0
+            ;;
+        list)
+            dkagent_sync_list "$@"
+            exit 0
+            ;;
+        ""|-h|--help)
+            print_sync_help
+            exit 0
+            ;;
+        *)
+            msg sync_unknown_action "$SYNC_ACTION" >&2
+            print_sync_help >&2
+            exit 1
+            ;;
+    esac
+fi
 
 # ─── 解析参数 ────────────────────────────────────────────
 
@@ -459,6 +990,25 @@ while [[ $# -gt 0 ]]; do
             exit 1
             ;;
         *)
+            # sync 子命令：即使出现在 --lang 等全局选项之后也能识别（不当作 AGENT_CMD）
+            if [[ "$1" == "sync" ]]; then
+                shift
+                SYNC_ACTION="${1:-}"
+                [[ -n "$SYNC_ACTION" ]] && shift
+                case "$SYNC_ACTION" in
+                    push|pull)
+                        dkagent_sync_xfer "$SYNC_ACTION" "$@"; exit 0 ;;
+                    list)
+                        dkagent_sync_list "$@"; exit 0 ;;
+                    ""|-h|--help)
+                        print_sync_help; exit 0 ;;
+                    *)
+                        msg sync_unknown_action "$SYNC_ACTION" >&2
+                        print_sync_help >&2
+                        exit 1
+                        ;;
+                esac
+            fi
             AGENT_CMD="$1"
             shift
             EXTRA_ARGS=("$@")
@@ -591,6 +1141,40 @@ fi
 DOCKER_ARGS=(
     "docker" "run" "--rm" "-it"
 )
+
+# 0. 容器名：基于当前目录，参考 tmux 命名逻辑处理重名
+#    - 默认名: dkagent-<basename($PWD)>（挂载多目录不影响命名，跟 tmux 一致只看 $PWD）
+#    - 同目录多个 dkagent 运行中: 加 _2 _3 ... 后缀
+#    - Docker 容器名规范 [a-zA-Z0-9][a-zA-Z0-9_.-]+，特殊字符替换为 _
+#    - 安全 escape hatch:
+#        DKAGENT_CONTAINER_NAME=xxx  自定义容器名
+#        DKAGENT_NO_CONTAINER_NAME=1 禁用命名（回到 Docker 随机名）
+#    可见性等同 tmux session 名（本地 docker 组成员能在 `docker ps` 看到）
+if [[ "${DKAGENT_NO_CONTAINER_NAME:-}" != "1" ]]; then
+    CONTAINER_NAME_BASE="${DKAGENT_CONTAINER_NAME:-dkagent-$(basename "$PWD")}"
+    # 把非 [a-zA-Z0-9_.-] 字符替换为 _（含中文目录名等），保证 Docker 接受
+    CONTAINER_NAME_BASE="$(printf '%s' "$CONTAINER_NAME_BASE" | sed 's/[^a-zA-Z0-9_.-]/_/g')"
+    # Docker 要求首字符是字母数字，否则前面补 'x'
+    [[ "$CONTAINER_NAME_BASE" =~ ^[a-zA-Z0-9] ]] || CONTAINER_NAME_BASE="x${CONTAINER_NAME_BASE}"
+    # 长度保险截断（Docker 允许 200+，这里 80 足够）
+    CONTAINER_NAME_BASE="${CONTAINER_NAME_BASE:0:80}"
+
+    if [[ -n "$CONTAINER_NAME_BASE" ]]; then
+        FINAL_CONTAINER_NAME="$CONTAINER_NAME_BASE"
+        n=2
+        # 仅检查运行中的容器（--rm 模式下退出即清理，停止的容器名是历史残留不阻塞）
+        while docker ps --filter "name=^${FINAL_CONTAINER_NAME}$" --format '{{.Names}}' 2>/dev/null | grep -q .; do
+            FINAL_CONTAINER_NAME="${CONTAINER_NAME_BASE}_${n}"
+            n=$((n+1))
+        done
+        if [[ "$FINAL_CONTAINER_NAME" != "$CONTAINER_NAME_BASE" ]]; then
+            msg container_name_renamed "$CONTAINER_NAME_BASE" "$FINAL_CONTAINER_NAME"
+        else
+            msg container_name_set "$FINAL_CONTAINER_NAME"
+        fi
+        DOCKER_ARGS+=("--name" "$FINAL_CONTAINER_NAME")
+    fi
+fi
 
 # 1. 挂载 Home 卷 (持久化 vs 临时)
 if [[ "$USE_PERSISTENT_HOME" == true ]]; then
