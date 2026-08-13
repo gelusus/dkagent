@@ -617,10 +617,12 @@ check_sync_image() {
 }
 
 # 持久化卷同步（容器嵌套 rsync over ssh）
-# 用法: sync_volume <direction> <user> <host> <port> <local_vol> <remote_vol> <retries> <dry>
+# 用法: sync_volume <direction> <user> <host> <port> <local_vol> <remote_vol> <retries> <dry> [rsync 附加参数...]
 sync_volume() {
     local direction="$1" user="$2" host="$3" port="$4"
     local local_vol="$5" remote_vol="$6" retries="${7:-10}" dry="${8:-false}"
+    shift 8
+    local extra_args=("$@")  # 用户经 -- 透传的 rsync 附加参数
     local ssh_opts="-p ${port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
     local base_args=(-az --delete --numeric-ids --partial --partial-dir=.rsync-partial --stats)
     if [[ "$dry" == true ]]; then
@@ -651,6 +653,7 @@ sync_volume() {
             ${SSH_AUTH_SOCK:+-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e SSH_AUTH_SOCK} \
             "$SYNC_IMAGE" \
             "${base_args[@]}" \
+            "${extra_args[@]}" \
             -e "ssh $ssh_opts" \
             --rsync-path="$remote_rsync_path" \
             "$src" "$dst"; then
@@ -668,10 +671,12 @@ sync_volume() {
 }
 
 # 项目目录同步（直连 rsync over ssh，不走容器）
-# 用法: sync_dir <direction> <user> <host> <port> <local_dir> <remote_dir> <retries> <dry>
+# 用法: sync_dir <direction> <user> <host> <port> <local_dir> <remote_dir> <retries> <dry> [rsync 附加参数...]
 sync_dir() {
     local direction="$1" user="$2" host="$3" port="$4"
     local local_dir="$5" remote_dir="$6" retries="${7:-10}" dry="${8:-false}"
+    shift 8
+    local extra_args=("$@")  # 用户经 -- 透传的 rsync 附加参数
     local ssh_opts="-p ${port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
     local base_args=(-az --delete --numeric-ids --partial --partial-dir=.rsync-partial --stats)
     if [[ "$dry" == true ]]; then
@@ -692,6 +697,7 @@ sync_dir() {
     for attempt in $(seq 1 "$retries"); do
         [[ "$dry" == false ]] && msg sync_attempt "$attempt" "$retries"
         if rsync "${base_args[@]}" \
+            "${extra_args[@]}" \
             -e "ssh $ssh_opts" \
             "$src" "$dst"; then
             [[ "$dry" == false ]] && msg sync_attempt_success "$attempt"
@@ -745,6 +751,7 @@ dkagent_sync_xfer() {
     local direction="$1"; shift
     local peer_alias="" remote_path_opt="" no_volume=false no_project=false
     local assume_yes=false dry_run_only=false retries=10
+    local rsync_extra_args=()  # -- 之后透传给 rsync 的附加参数（保持参数边界，勿拼字符串）
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -762,6 +769,11 @@ dkagent_sync_xfer() {
                     exit 1
                 fi
                 retries="$2"; shift 2 ;;
+            --)
+                # rsync 附加参数透传（如 -- --exclude=.git/），必须位于最后
+                shift
+                rsync_extra_args=("$@")
+                break ;;
             -h|--help)      print_sync_help; exit 0 ;;
             -*)
                 msg err_unknown_opt "$1" >&2; exit 1 ;;
@@ -826,11 +838,11 @@ dkagent_sync_xfer() {
         if [[ "$will_volume" == true ]]; then
             check_sync_image || exit 1
             sync_volume "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
-                "$HOME_VOLUME" "$HOME_VOLUME" 1 true || true
+                "$HOME_VOLUME" "$HOME_VOLUME" 1 true "${rsync_extra_args[@]}" || true
         fi
         if [[ "$will_dir" == true ]]; then
             sync_dir "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
-                "$local_dir" "$remote_dir" 1 true || true
+                "$local_dir" "$remote_dir" 1 true "${rsync_extra_args[@]}" || true
         fi
         exit 0
     fi
@@ -865,12 +877,12 @@ dkagent_sync_xfer() {
     if [[ "$will_volume" == true ]]; then
         check_sync_image || exit 1
         sync_volume "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
-            "$HOME_VOLUME" "$HOME_VOLUME" "$retries" false || exit 1
+            "$HOME_VOLUME" "$HOME_VOLUME" "$retries" false "${rsync_extra_args[@]}" || exit 1
     fi
 
     if [[ "$will_dir" == true ]]; then
         sync_dir "$direction" "$SYNC_USER" "$SYNC_HOST" "$SYNC_PORT" \
-            "$local_dir" "$remote_dir" "$retries" false || exit 1
+            "$local_dir" "$remote_dir" "$retries" false "${rsync_extra_args[@]}" || exit 1
     fi
 
     msg sync_done
