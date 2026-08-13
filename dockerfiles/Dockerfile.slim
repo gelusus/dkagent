@@ -19,11 +19,20 @@ ENV TZ=Asia/Shanghai
 ENV PLAYWRIGHT_MCP_BROWSER=chromium
 ENV DEBIAN_FRONTEND=noninteractive
 
+# 安装 Node.js 24 LTS（NodeSource）：bookworm 自带 Node 18 太旧，
+# @playwright/cli@latest 等要求 Node >= 20；版本与 kali profile 对齐（v24）
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl gnupg && \
+    curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
 # 安装基础依赖（curl/git/zsh/sudo 等通用工具，无 Kali 专属包）
+# 注: nodejs 来自上一步 NodeSource 源（自带 npm），不再装 Debian 源里的旧版 npm
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates curl git sudo zsh vim jq bsdextrautils \
-        npm iputils-ping rlwrap less procps docker-cli && \
+        nodejs iputils-ping rlwrap less procps docker.io && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -31,6 +40,10 @@ RUN apt-get update && \
 RUN useradd -m -s /bin/zsh kali && \
     echo "kali ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER kali
+
+# 预创建 workspace 挂载点（dkagent --no-mount 模式以 -w 进入此目录；
+# 若镜像内不预建，docker 运行时会以 root 自动创建，kali 用户将无写权限）
+RUN mkdir -p /home/kali/workspace
 
 # 安装 oh-my-zsh 及自动补全插件（与 kali profile 一致）
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended && \

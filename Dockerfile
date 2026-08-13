@@ -15,6 +15,10 @@ RUN useradd -m -s /bin/zsh kali && \
     echo "kali ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
 USER kali
 
+# 预创建 workspace 挂载点（dkagent --no-mount 模式以 -w 进入此目录；
+# 若镜像内不预建，docker 运行时会以 root 自动创建，kali 用户将无写权限）
+RUN mkdir -p /home/kali/workspace
+
 # 安装 oh-my-zsh 及自动补全插件
 RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended && \
     git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions && \
