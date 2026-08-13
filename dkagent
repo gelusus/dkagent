@@ -128,6 +128,8 @@ declare -A MSG_ZH=(
     [tmux_wrapping]="🔌 已创建 tmux 会话 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_wrapping_renamed]="🔌 会话名 '%s' 已被占用，改用 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_no_tmux]="ℹ️  --no-tmux 已禁用宿主机 tmux 包装（SSH 断线进程会丢失）"
+    [err_port_invalid]="❌ 错误: 无效的端口映射: %s（格式: [宿主IP:]宿主端口:容器端口[/tcp|/udp]，如 8080:8080 或 127.0.0.1:3000:3000）"
+    [port_publish]="🔌 端口映射: %s"
     # ── sync 子命令（纯手动，绝不与 docker run/tmux 耦合）──
     [sync_unknown_action]="❌ 错误: 未知的 sync 子命令: %s"
     [err_sync_peer_required]="❌ 错误: 缺少 peer 别名。用法: dkagent sync push <peer>"
@@ -198,6 +200,8 @@ declare -A MSG_EN=(
     [tmux_wrapping]="🔌 Created tmux session '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_wrapping_renamed]="🔌 Session name '%s' taken, using '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_no_tmux]="ℹ️  --no-tmux: host tmux wrapping disabled (SSH disconnect loses the process)"
+    [err_port_invalid]="❌ Error: Invalid port mapping: %s (format: [HOST_IP:]HOST_PORT:CONTAINER_PORT[/tcp|/udp], e.g. 8080:8080 or 127.0.0.1:3000:3000)"
+    [port_publish]="🔌 Port mapping: %s"
     # ── sync subcommand (purely manual, never coupled with docker run/tmux) ──
     [sync_unknown_action]="❌ Error: Unknown sync subcommand: %s"
     [err_sync_peer_required]="❌ Error: peer alias required. Usage: dkagent sync push <peer>"
@@ -277,6 +281,8 @@ Options:
   --no-mount             🟢 Mount nothing (cannot touch host files at all, safest)
   --docker-socket        🐋 Mount host docker.sock so the container can run docker
                          ⚠️ Highest risk: equivalent to handing host root to the container
+  --port HOST:CONTAINER  🔌 Publish a container port to the host (docker -p semantics)
+                         Repeatable, e.g. 8080:8080, 127.0.0.1:3000:3000, 9000:9000/udp
   --no-tmux              🔌 Disable host tmux wrapping (SSH disconnect loses the process)
   --tmux-name NAME       🔌 Custom tmux session name (default: dkagent-<cwd basename>)
                          Duplicate names get a _2, _3... suffix; reconnect with tmux attach
@@ -309,6 +315,7 @@ Examples:
   dkagent -p slim claude                     # 🎚️ run Claude with the slim image
   dkagent --image my-custom-agent claude     # 🐳 use any custom image
   dkagent --docker-socket claude             # 🐋 docker usable inside (⚠️ highest risk)
+  dkagent --port 8080:8080 claude            # 🔌 expose a container service to the host
   dkagent --tmux-name mywork claude          # 🔌 custom tmux session name
   dkagent --no-tmux claude                   # 🔌 disable tmux wrapping
 EOF
@@ -340,6 +347,8 @@ Agent 名称:
   --no-mount             🟢 不挂载任何工作目录（完全无法触碰宿主机文件，最安全）
   --docker-socket        🐋 挂载宿主 docker.sock，让容器内可运行 docker 命令
                          ⚠️ 最高风险：等同把宿主机 root 权限交给容器
+  --port HOST:CONTAINER  🔌 端口映射（等价 docker run -p，可重复指定）
+                         如 8080:8080、127.0.0.1:3000:3000、9000:9000/udp
   --no-tmux              🔌 禁用宿主机 tmux 包装（SSH 断线进程会丢失）
   --tmux-name NAME       🔌 自定义 tmux 会话名（默认: dkagent-<当前目录名>）
                          重名时自动加 _2、_3... 后缀；重连用 tmux attach
@@ -372,6 +381,7 @@ Agent 名称:
   dkagent -p slim claude                     # 🎚️ 使用精简镜像运行 Claude
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
   dkagent --docker-socket claude             # 🐋 容器内可用 docker（⚠️ 最高风险）
+  dkagent --port 8080:8080 claude            # 🔌 将容器内服务端口映射到宿主机
   dkagent --tmux-name mywork claude          # 🔌 自定义 tmux 会话名
   dkagent --no-tmux claude                   # 🔌 禁用 tmux 包装
 EOF
@@ -486,6 +496,27 @@ build_env_args() {
             ENV_DOCKER_ARGS+=("-e" "${var}=${!var}")
         fi
     done
+}
+
+# 校验 --port 参数格式（防手误；参数走 DOCKER_ARGS 数组传参无 shell 注入风险，
+# 端口上限 / 冲突等最终交给 docker 报错）
+# 支持格式: [宿主IP:]宿主端口:容器端口[/tcp|/udp|/sctp]，端口可写范围 8000-8010
+validate_port_mapping() {
+    local m="$1" s="$1"
+    [[ -z "$m" ]] && return 1
+    [[ "$m" =~ [[:space:]] ]] && return 1
+    # 去掉可选协议后缀
+    if [[ "$s" =~ ^(.*)/(tcp|udp|sctp)$ ]]; then
+        s="${BASH_REMATCH[1]}"
+    fi
+    # 去掉可选宿主 IP 前缀（IPv4 或 [IPv6]），注意剩余部分必须始终是唯一捕获组（BASH_REMATCH[1]）
+    if [[ "$s" =~ ^\[[0-9a-fA-F:]+\]:(.+)$ ]]; then
+        s="${BASH_REMATCH[1]}"
+    elif [[ "$s" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}:(.+)$ ]]; then
+        s="${BASH_REMATCH[1]}"
+    fi
+    # 剩余必须是 宿主端口:容器端口
+    [[ "$s" =~ ^[0-9]{1,5}(-[0-9]{1,5})?:[0-9]{1,5}(-[0-9]{1,5})?$ ]]
 }
 
 # ─── sync 子命令实现（独立、纯手动，绝不耦合 docker run / tmux）────────────
@@ -877,6 +908,7 @@ fi
 USE_PERSISTENT_HOME=true
 MOUNT_MODE="PWD" # PWD, CUSTOM, NONE
 MOUNT_DIRS=()    # 每个元素: "/path/to/dir:rw" 或 "/path/to/dir:ro"
+PORT_MAPS=()     # 端口映射（--port 可重复），每个元素: docker -p 语法，如 "8080:8080" 或 "127.0.0.1:3000:3000"
 CUSTOM_ENV=""
 DRY_RUN=false
 AGENT_CMD=""
@@ -971,6 +1003,18 @@ while [[ $# -gt 0 ]]; do
         --docker-socket)
             ENABLE_DOCKER=true
             shift
+            ;;
+        --port)
+            if [[ $# -lt 2 ]]; then
+                msg err_opt_needs_arg "--port" >&2
+                exit 1
+            fi
+            if ! validate_port_mapping "$2"; then
+                msg err_port_invalid "$2" >&2
+                exit 1
+            fi
+            PORT_MAPS+=("$2")
+            shift 2
             ;;
         --no-tmux)
             ENABLE_TMUX=false
@@ -1262,6 +1306,12 @@ if [[ "$ENABLE_DOCKER" == true ]]; then
         DOCKER_ARGS+=("--group-add" "$DOCKER_GID")
     fi
 fi
+
+# 2.8 端口映射（--port 可重复，跟随 docker run -p 原生语义，绑定地址默认 0.0.0.0）
+for mapping in "${PORT_MAPS[@]}"; do
+    DOCKER_ARGS+=("-p" "$mapping")
+    msg port_publish "$mapping"
+done
 
 # 3. 打印安全风险信息
 HAS_WRITABLE=false

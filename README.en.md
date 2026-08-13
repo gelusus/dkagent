@@ -4,164 +4,98 @@
 
 > One bash command turns any directory into an isolated AI Agent runtime.
 
-A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Claude Code, Gemini CLI, Codex, Pi, and OpenCode pre-installed. Supports **per-directory read-only mounts**, **multiple image profiles**, and uses 🟢🟡🔴 colors so you can see at a glance how much power you've handed the Agent each run.
+A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Claude Code, Gemini CLI, Codex, Pi, and OpenCode pre-installed. Supports **per-directory read-only mounts**, **multiple image profiles**, tmux auto-reconnect and multi-machine handoff sync, and uses 🟢🟡🔴 colors so you can see at a glance how much power you've handed the Agent each run.
 
 ---
 
-## Design philosophy: simple, with safety delegated to Docker
-
-dkagent is essentially **a ~750-line bash script** with no self-rolled sandbox logic. It does exactly one thing: **orchestrate Docker's existing isolation into a usable command line**.
-
-- **Safety = Docker itself**: Container isolation relies on Docker's native namespace / cgroup / bind-mount — kernel mechanisms proven in production for a decade. dkagent doesn't reinvent them; it just calls them.
-- **Risk level = what you mount**: Every 🟢🟡🔴 tier maps directly to the scope of mounted volumes, with no hidden logic. `--dry-run` shows you the full `docker run` command before execution — what you see is what you get.
-- **Auditable**: The whole tool is one script. No background process, no daemon, no runtime injection. Reading the source once is enough to fully understand what it does to your system.
-
-This is also why dkagent can safely hand `--dangerously-skip-permissions` to the Agent — the real security boundary is the container, not the Agent's own permission prompts.
-
----
-
-## Why dkagent
+## Core features
 
 **1. Per-directory read/write control, one command away**
-Mount multiple directories directly on the command line, each independently read-only or writable — no config files needed:
 ```bash
 # Original project read-only, copy directory writable
 dkagent -m ./original -r -m ./workspace/my-copy claude
 ```
-The "reference project A's code, edit project B" scenario works in one line — read-only dirs are pinned at the kernel level via Docker bind mounts and cannot be written to.
+Read-only dirs are pinned at the kernel level via Docker bind mounts — the "reference project A, edit project B" scenario works in one line.
 
-**2. Unified entry point for multiple Agents — switch between five in one environment**
-No need to configure environments and install dependencies separately for each Agent. dkagent bundles Claude / Gemini / Codex / Pi / OpenCode into one image, and the persistent Home volume keeps all Agent login credentials and configs — seamless switching.
+**2. Unified entry point for multiple Agents**: Claude / Gemini / Codex / Pi / OpenCode are all bundled into one image. The persistent Home volume keeps every Agent's login credentials and configs — seamless switching.
 
-**3. Kali toolchain ready — out-of-the-box for security research**
-The default image is based on Kali Linux, with Playwright browser, nmap, fd, ripgrep, oh-my-zsh and a full toolkit built in. Want something lighter? Switch to the `slim` profile (based on Debian slim, roughly two-thirds smaller).
+**3. Kali toolchain out of the box**: the default image is based on Kali Linux (nmap, ripgrep, Playwright, full toolkit). Need lighter? Switch to the `slim` profile (Debian slim, roughly two-thirds smaller).
+
+**4. Defense in depth**: Agents' own containers and safety mechanisms have had their share of vulnerabilities. dkagent adds **another layer of Docker isolation on the outside** — even if an Agent's internal defenses are bypassed, it still cannot touch host files.
 
 ---
 
-## Quick start
+## Prerequisites
 
-We recommend starting with the **slim image** (based on Debian slim — small, fast to build, ~2-3 min), then switching to Kali as needed.
+| Dependency | Purpose | Install |
+| :--- | :--- | :--- |
+| **Docker** | required | Linux: `apt install docker.io` / macOS, Windows: Docker Desktop |
+| **git** | clone this repo | `apt install git` / `brew install git` |
+| **bash 4+** | script runtime | macOS ships bash 3.2 — needs `brew install bash` |
+| **ssh client** | `dkagent sync` & remote access | Linux: `apt install openssh-client` / macOS: built-in |
+| **rsync** | only `dkagent sync` dir sync (volume sync runs inside a container) | `apt install rsync` / `brew install rsync` |
+| **tmux** | optional; enables auto-reconnect | `apt install tmux` / `brew install tmux` |
+
+Volume sync via `dkagent sync` additionally needs the helper image `dkagent-sync` (~14 MB): `docker build -t dkagent-sync -f dockerfiles/Dockerfile.sync .`
+
+---
+
+## Install & quick start
+
+We recommend starting with the **slim image** (~2-3 min build) to get things running, then switching to Kali as needed.
 
 ```bash
-# 1. Install the CLI tool (auto-creates ~/.config/dkagent/ and copies the .env template)
+# 1. Install the CLI (auto-creates ~/.config/dkagent/ and copies the .env template)
 chmod +x install.sh && ./install.sh
-
-# 2. Fill in your API keys (edit this file after first install; never commit to git)
+# 2. Fill in your API keys (never commit to git)
 vi ~/.config/dkagent/.env
-
-# 3. Build the slim image (fast, ~2-3 min)
+# 3. Build the slim image
 docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .
-
-# 4. From any directory, launch in one line
+# 4. From any project directory, launch in one line
 cd ~/my-project
 dkagent -p slim claude --dangerously-skip-permissions
 ```
 
-> **About `--dangerously-skip-permissions`**: since dkagent already isolates via a container, you can safely hand this "fully automatic" flag to the Agent, letting it execute commands inside the container without confirmation — this is the core payoff of containerization.
+> **About `--dangerously-skip-permissions`**: the real security boundary is the container, not the Agent's permission prompts — the container already isolates, so you can safely hand this "fully automatic" flag to the Agent.
 
-### Want the Kali image? (optional)
+**Want the Kali image?** (~10 GB, 15-30 min first build): run `docker compose build`, then just `dkagent claude` (kali is the default profile).
 
-The Kali image ships the full security-research toolchain (nmap, metasploit, Playwright, etc.), but it's **about 10 GB and the first build takes 15-30 minutes** (depending on network):
-
-```bash
-docker compose build              # build the kali image (my-kali-agent)
-dkagent claude                    # uses the kali profile by default
-```
-
-> **macOS users**: this script uses bash 4+ associative arrays. macOS ships bash 3.2 (2007); install a newer bash first with `brew install bash`. See [Platform support](#platform-support) below.
+**Platform support**: Linux / WSL2 ✅ native; macOS ⚠️ needs `brew install bash` first; Windows native ❌ not supported — use WSL2.
 
 ---
 
-## Platform support
+## Environment injection (.env)
 
-| Platform | Status | Notes |
-| :--- | :--- | :--- |
-| **Linux** | ✅ Native | Verified |
-| **WSL2** | ✅ Native | Verified. Windows users should use WSL2 + Docker Desktop |
-| **macOS** | ⚠️ Theoretically works, untested | The script uses bash 4+ associative arrays; macOS system bash is 3.2, needs `brew install bash`. Feedback from macOS users welcome |
-| **Windows native** | ❌ Not supported | No bash/sudo; use WSL2 |
+dkagent auto-discovers a `.env` file and injects each `KEY=value` line as an environment variable into the container (visible to Agents and scripts). Search order: path from `$DKAGENT_ENV` → `~/.config/dkagent/.env` → `.env` next to the script.
+
+```bash
+# Before entering, copy your host's env file to .env — dkagent injects it automatically
+cp ~/projects/secrets.env ~/.config/dkagent/.env
+dkagent claude        # every KEY in .env is readable inside the container
+```
+
+Host-exported `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` override same-named `.env` entries; blank lines and `#` comments are skipped.
 
 ---
 
 ## Image profiles (switching environments)
 
-dkagent switches run environments via profiles. All profiles **share the same persistent Home volume**, so when you switch images your zsh config, command history, and Agent login credentials are all preserved.
+All profiles **share the same persistent Home volume** — switching images keeps your zsh config, command history, and Agent login credentials.
 
-| Profile | Base image | Size | Use case |
-| :--- | :--- | :--- | :--- |
-| **`kali`** (default) | Kali Linux | Large | Security research, pentesting, needs the full toolchain |
-| **`slim`** | Debian slim | Small | Daily coding, CI/CD, prioritizing startup speed |
-
-```bash
-# Default uses kali
-dkagent claude
-
-# Switch to the slim image
-docker build -t dkagent-slim -f dockerfiles/Dockerfile.slim .   # build once first
-dkagent -p slim claude
-
-# Specify any custom image directly (escape hatch)
-dkagent --image my-custom-agent claude
-```
-
-**Adding a custom profile**: append a line to `~/.config/dkagent/profiles`:
-```
-node=my-node-agent
-rust=my-rust-agent
-```
-Then `dkagent -p node claude` works.
-
-> **⚠️ Custom image constraint**: for the persistent Home volume to be reusable across images, your custom image's Dockerfile must create a `kali` user and use `/home/kali` as the home path (see `dockerfiles/Dockerfile.slim`). Otherwise run with `-e` (ephemeral Home) mode.
-
----
-
-## Config migration (reusing host login state)
-
-If you've already logged into an Agent on the host, you can copy the login state into the dkagent persistent volume once, avoiding a fresh login inside the container. Run the following commands on the **host**.
-
-### Agent config path cheatsheet
-
-| Agent | Config dir | Key credential file | Notes |
-| :--- | :--- | :--- | :--- |
-| Claude Code | `~/.claude/` + `~/.claude.json` | `~/.claude/.credentials.json` (0600) | Must also copy the `~/.claude.json` file separately |
-| Codex | `~/.codex/` | `~/.codex/auth.json` | If missing, it uses the keychain and can't be migrated |
-| OpenCode | `~/.config/opencode/` + `~/.local/share/opencode/` | `~/.local/share/opencode/auth.json` | Config and credentials are two dirs; copy both |
-| Pi | `~/.pi/agent/` | `~/.pi/agent/auth.json` | |
-
-### Claude Code example
+| Profile | Base image | Use case |
+| :--- | :--- | :--- |
+| **`kali`** (default) | Kali Linux | security research, pentesting, full toolchain |
+| **`slim`** | Debian slim | everyday coding, fast startup |
 
 ```bash
-# 1. Copy the ~/.claude/ config dir (contains login credentials)
-docker run --rm \
-  -v agent_docker_kali-home:/home/kali \
-  -v "$HOME/.claude:/src:ro" \
-  alpine sh -c "mkdir -p /home/kali/.claude && cp -a /src/. /home/kali/.claude/"
-
-# 2. Copy the ~/.claude.json user config file (note: it's a file, not a dir)
-docker run --rm \
-  -v agent_docker_kali-home:/home/kali \
-  -v "$HOME/.claude.json:/src:ro" \
-  alpine sh -c "cp -a /src /home/kali/.claude.json"
+dkagent claude                          # default: kali
+dkagent -p slim claude                  # switch to slim (build it first: docker build -t dkagent-slim ...)
+dkagent --image my-custom-agent claude  # any image directly (escape hatch)
 ```
 
-### Codex example
+**Custom profiles**: append a line like `node=my-node-agent` to `~/.config/dkagent/profiles`, then `dkagent -p node claude`.
 
-```bash
-# Precheck: if ~/.codex/auth.json is missing, credentials are in the keychain and can't be migrated via files
-ls ~/.codex/auth.json
-
-docker run --rm \
-  -v agent_docker_kali-home:/home/kali \
-  -v "$HOME/.codex:/src:ro" \
-  alpine sh -c "mkdir -p /home/kali/.codex && cp -a /src/. /home/kali/.codex/"
-```
-
-> [!WARNING]
-> **Migration caveats**
-> - **Gemini: re-login inside the container is recommended**: it stores credentials in the system keyring by default, with the encryption key bound to hostname + username. Migration into a container usually fails to decrypt.
-> - **Overwrite risk**: the commands above overwrite same-named files in the container. Back up first if you already have configs there.
-> - **Cross-platform**: keychain credentials from macOS cannot be migrated via files; re-login inside the container.
-> - **Ownership**: if credentials can't be read after migration, it's usually an ownership mismatch — fix inside the container with `sudo chown -R kali:kali ~/.<dir>`.
+> **⚠️ Custom image constraint**: to reuse the persistent Home volume across images, the image must create a `kali` user with home at `/home/kali` (see `dockerfiles/Dockerfile.slim`), otherwise run with `-e` (ephemeral Home).
 
 ---
 
@@ -211,268 +145,160 @@ AI Agents hold powerful filesystem permissions during a task. To prevent an Agen
 
 ---
 
-## UI language
+## Config migration (reusing host login state)
 
-dkagent's interface prompts auto-detect language and default to **Chinese**, with full English support:
+Already logged into an Agent on the host? Copy the login state into the persistent volume once and skip re-login inside the container. Core idea: **login state dir → `docker run` with the volume mounted** (run on the host).
 
-- **Auto-detect**: reads `$LANG` / `$LC_ALL` — `zh_*` → Chinese, anything else → English
-- **Manual override**: `dkagent --lang en` (or `zh`)
-- **Persistent override**: `export DKAGENT_LANG=en`
-
-Priority: `--lang` flag > `DKAGENT_LANG` env var > `$LANG`/`$LC_ALL` auto-detect > default (Chinese).
+| Agent | Config dir | Key credential file | Notes |
+| :--- | :--- | :--- | :--- |
+| Claude Code | `~/.claude/` + `~/.claude.json` | `~/.claude/.credentials.json` (0600) | also copy the `~/.claude.json` file separately |
+| Codex | `~/.codex/` | `~/.codex/auth.json` | if missing, credentials live in keychain — not migratable |
+| OpenCode | `~/.config/opencode/` + `~/.local/share/opencode/` | `~/.local/share/opencode/auth.json` | two dirs, copy both |
+| Pi | `~/.pi/agent/` | `~/.pi/agent/auth.json` | |
 
 ```bash
-dkagent --lang en --help          # English help
-LANG=en_US.UTF-8 dkagent --help   # auto-detected English
+# Generic template: copy host <src> into the persistent volume (substitute paths from the table)
+docker run --rm -v agent_docker_kali-home:/home/kali -v "$HOME/<src>:/src:ro" \
+  alpine sh -c "mkdir -p /home/kali/<dst> && cp -a /src/. /home/kali/<dst>/"
 ```
+
+> [!WARNING]
+> **Notes**: re-login to Gemini inside the container instead (its credentials are encrypted and bound to hostname + username, likely unreadable after migration); the commands overwrite same-named files inside the container — back up first; macOS keychain credentials can't be migrated as files; if credentials become unreadable after migration it's usually an ownership issue — fix with `sudo chown -R kali:kali ~/.<dir>` inside the container.
 
 ---
 
-## Remote sessions & reconnect after disconnect
+## Remote sessions & reconnect
 
-When you SSH into a physical machine to run an Agent, you'll often hit the **running session is lost after the terminal disconnects** problem — network blips, closing your laptop, switching networks all drop SSH.
-
-dkagent **wraps with tmux by default** (when the host has tmux installed) to solve this at the root:
-
-- **Running** `dkagent claude`: launches the Agent inside a tmux session named `dkagent-<cwd basename>`. **Every run creates a fresh, independent session** (duplicate names get a `_2`, `_3`… suffix — no cross-talk)
-- **SSH drops**: the tmux server runs on the physical machine and is unaffected — the Agent process keeps running
-- **Manual reconnect**: `tmux attach -t dkagent-<dirname>` resumes the original session (note: re-running `dkagent` starts a NEW session, it does not attach)
+When running Agents over SSH, a dropped terminal kills the session. dkagent **wraps everything in tmux by default** (when tmux is installed on the host) — the session lives in the host's tmux, so the Agent keeps running when SSH drops:
 
 ```bash
-# First SSH connection
 ssh user@host
 cd ~/project-a
-dkagent claude            # creates tmux session dkagent-project-a, Agent runs inside
-
-# SSH dropped, reconnect
-ssh user@host
-tmux attach -t dkagent-project-a   # manually resume the original session, Agent still running
-# (running `dkagent claude` again here would create a NEW session dkagent-project-a_2)
+dkagent claude                  # creates tmux session dkagent-project-a; the Agent runs inside
+# SSH dropped; after reconnecting:
+tmux attach -t dkagent-project-a   # resume the session (running dkagent again creates _2, not attach)
 ```
 
-The session name defaults to the working directory (different projects are naturally isolated), and can be customized with `--tmux-name NAME` or the `DKAGENT_TMUX_SESSION` env var.
+Each run creates a fresh independent session (auto-suffixed `_2`, `_3` on name collisions); containers are named `dkagent-<dirname>` for easy `docker ps` identification. Customize with `--tmux-name NAME`, disable with `--no-tmux`; `DKAGENT_NO_CONTAINER_NAME=1` falls back to Docker random names.
 
-**Disabling tmux wrapping**:
+---
 
-```bash
-dkagent --no-tmux claude            # disable for this run, run docker directly
-```
+## Out and about: reaching your home computer remotely
 
-> 💡 **Design trade-off**: tmux wrapping happens at the host layer (not inside the container). The container remains `--rm` one-shot — no long-running service processes, zero extra resource overhead. The session is automatically destroyed when the Agent exits normally.
+Your home computer has no public IP, so SSH from outside won't connect — use **NAT traversal** (intranet penetration / reverse tunnel). Two choices:
 
-> 💡 **Container naming**: each container is named `dkagent-<basename($PWD)>` by default (same style as tmux session names; duplicate names get `_2`, `_3`... suffixes), so you can identify which project a container belongs to in `docker ps`. On multi-user systems or when the project name is sensitive, set `DKAGENT_NO_CONTAINER_NAME=1` to disable naming (fall back to Docker's random names), or `DKAGENT_CONTAINER_NAME=xxx` to customize.
+**Option 1: self-hosted tunnel (FRP)**: run `frps` on a cheap server with a public IP; your home computer runs `frpc` mapping SSH 22 to a server port; connect straight to the server from anywhere: `ssh -p 6000 user@server.example.com`. Similar: ngrok, Tailscale / ZeroTier mesh networks.
+
+**Option 2: third-party port-mapping service (NetEase UU Remote)**: free, zero servers. Install the [UU Remote](https://uuyc.163.com/) client on both the home and outside computers and sign in with the same account; on the home computer, create a mapping under "Devices → More → Port mapping": local access port (e.g. 13022) → target `127.0.0.1:22`, keep the rule enabled; connect to your local port from outside (TCP): `ssh -p 13022 user@127.0.0.1`. Similar: Oray Peanut Hull (花生壳), etc.
+
+**Phone**: just install the [UU Remote](https://uuyc.163.com/) app to remote-control the home computer (mobile doesn't support port mapping — no SSH tunnel needed); for pure command-line coding, use Termux + `pkg install openssh` with Option 1.
+
+> **Safety note**: turn temporary mappings off when done; use SSH keys, never passwords.
 
 ---
 
 ## Multi-machine handoff sync
 
-If you have multiple machines (e.g. desktop + laptop) and want to hand off dkagent's working state to another machine, the `dkagent sync` subcommand syncs the persistent volume and project directory to a peer. **Purely manual — running `dkagent claude` and similar commands never triggers sync.**
+Continue work across machines: `dkagent sync` syncs the persistent volume (tool config / command history / Agent credentials) and project dirs to the peer. **Fully manual — `dkagent claude` and friends will never auto-sync.**
 
-### Prerequisites (once on each machine)
+**Prep** (once on each side): install Docker + dkagent → set up passwordless SSH → build the `dkagent-sync` image (see [Prerequisites](#prerequisites)) → edit `~/.config/dkagent/peers`:
+```
+# one line per: alias=ssh://user@host:port (use the mapped address with a tunnel, e.g. ssh://user@127.0.0.1:13022)
+laptop=ssh://user@laptop.local:22
+```
+> This file contains SSH URLs — `chmod 600 ~/.config/dkagent/peers` is recommended.
 
-1. Install Docker + dkagent
-2. Configure SSH key-based authentication between the two machines
-3. Build the `dkagent-sync` helper image (~14 MB, used for cross-host rsync):
-
-   ```bash
-   docker build -t dkagent-sync -f dockerfiles/Dockerfile.sync .
-   ```
-
-   > On Windows + WSL2 + Docker Desktop, if you hit a `docker-credential-desktop.exe` error, bypass it with: `docker --config /tmp/empty-docker-cfg build -t dkagent-sync -f dockerfiles/Dockerfile.sync .`
-
-4. Create the peers config file `~/.config/dkagent/peers` listing remote machines:
-
-   ```
-   # One peer per line: alias=ssh://user@host:port
-   laptop=ssh://user@laptop.local:22
-   desktop=ssh://user@desktop.local:22
-   ```
-
-   > [!WARNING]
-   > This file contains SSH URLs — recommended permission 600: `chmod 600 ~/.config/dkagent/peers`
-
-### Basic usage
-
+**Basic usage**:
 ```bash
-# Show peers + mapping for current dir
-dkagent sync list
-
-# First-time sync of current project dir to a peer (--remote-path required, auto-saved to mapping)
+dkagent sync list                            # list peers + current dir mapping
 cd ~/my-project
-dkagent sync push laptop --remote-path ~/my-project
-
-# Subsequent syncs (auto-use saved mapping)
-dkagent sync push laptop
-
-# Reverse direction (peer → local)
-dkagent sync pull laptop
-
-# Preview only, no actual changes (no confirmation needed)
-dkagent sync push laptop --dry-run
-
-# Pass-through rsync args (e.g. protect .git / .env)
-dkagent sync push laptop -- --exclude=.git/ --exclude=.env
+dkagent sync push laptop --remote-path ~/my-project   # first time (--remote-path required, stored as mapping)
+dkagent sync push laptop                     # later runs reuse the stored mapping
+dkagent sync pull laptop                     # reverse direction (peer → local)
+dkagent sync push laptop --dry-run           # preview only, no changes
+dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # pass through rsync args
 ```
 
-### Default behavior
-
-Each `dkagent sync push/pull` syncs by default:
-
-1. **Persistent volume** `agent_docker_kali-home` (same name on both ends) — tool configs / shell history / Agent credentials / Claude session
-2. **Current project directory** (if a mapping exists; skipped if no mapping and no `--remote-path` given)
-
-**Persistent volume uses nested containers** (rsync over ssh + `--rsync-path`, so the remote rsync process also runs inside a container with the volume mounted). **Project dir uses direct rsync over ssh** (faster).
-
-Default rsync flags (mandatory in practice):
-- `-az --delete --numeric-ids` — archive + compress + delete remote-only + preserve uid/gid numerically
-- `--partial --partial-dir=.rsync-partial` — resumable transfers (keep half-done files across retries)
-- ssh `ServerAliveInterval=30 ServerAliveCountMax=20` — long-link keepalive tolerance
-- Built-in 10-attempt retry loop (30s sleep between attempts)
+**Default behavior**: syncs both the persistent volume and the current project dir by default; the volume uses **container-nested** rsync over ssh, dirs use **direct** rsync (faster). Default flags: `-az --delete --numeric-ids --partial --partial-dir=.rsync-partial`, ssh keepalive, and 10 built-in retries (30 s apart).
 
 > [!CAUTION]
-> **`--delete` is ON by default**: remote-only files will be removed to keep the mirror consistent. **Before the first sync, strongly recommended to add `--dry-run` to see what gets deleted** — especially `.env` API keys, `.git/` history, and any remote-only work.
+> **`--delete` is on by default**: files only present on the remote are deleted to keep a mirror. Strongly recommend `--dry-run` before the first sync to see what would be deleted — watch out for `.env` API keys and `.git/` history.
 
-### Options
+**Options at a glance**: `--remote-path PATH` / `--no-volume` / `--no-project` / `--dry-run` / `-y` / `--retries N` / `-- RSYNC_ARGS` (see `dkagent sync --help`).
 
-| Option | Effect |
-| :--- | :--- |
-| `--remote-path PATH` | Specify remote project dir on first run; auto-saved to mapping |
-| `--no-volume` | Skip persistent volume, sync project dir only |
-| `--no-project` | Skip project dir, sync persistent volume only |
-| `--dry-run` | Preview only, no actual sync (no confirmation needed) |
-| `-y` / `--yes` | Skip preview and run directly |
-| `--retries N` | Max retry attempts (default 10) |
-| `-- RSYNC_ARGS` | Pass-through to underlying rsync |
-
-### Config files
-
-| File | Purpose | Format |
-| :--- | :--- | :--- |
-| `~/.config/dkagent/peers` | Peer list | `alias=ssh://user@host:port` |
-| `~/.config/dkagent/sync-mapping` | Project path mapping | `local-path<TAB>peer<TAB>remote-path` |
-
-Both are plain text and can be edited with `vi`. The `sync-mapping` file is managed automatically (written on first `--remote-path` use), but manual edits are fully supported.
-
-### Performance characteristics
-
-- **First full sync**: depends on bandwidth (persistent volume size varies with usage duration). rsync + `--partial` supports resume — broken transfers pick up where they left off, no progress lost.
-- **Subsequent incremental syncs**: rsync's delta algorithm sends only changed parts. Day-to-day handoffs typically transfer just a few MB (session logs `.jsonl`, `.zsh_history`, small config changes).
-
-### Troubleshooting
-
-- **`dkagent-sync` image missing**: the error message includes the build command — copy and run it (required on both ends)
-- **Frequent SSH disconnects**: common on cross-network / cross-ocean links. The built-in 10-retry + resumable transfer handles this; use `--retries 20` for more attempts
-- **dry-run output contains API keys**: dry-run prints the full `docker run` command including `.env` keys. **Mask them before sharing the output**
+**Config files**: `~/.config/dkagent/peers` (peer list), `~/.config/dkagent/sync-mapping` (path mapping; auto-managed by the script, but editable by hand).
 
 ---
 
-## Command-line usage
-
-### Basic structure
+## Command-line reference
 
 ```bash
-dkagent [options] [agent] [extra args...]
+dkagent [options] [agent] [extra args...]    # agent: claude/gemini/pi/codex/opencode; empty → interactive zsh
 ```
-
-### Common operations
 
 ```bash
-# Enter an interactive Kali shell (mounts the current dir)
-dkagent
-
-# Launch Claude Code inside the container directly
-dkagent claude
-
-# Use a temporary Home volume (ephemeral)
-dkagent -e claude
-
-# Mount multiple directories (original project + shared libs)
-dkagent -m ./my-project -m ./shared-libs claude
-
-# Original project read-only, copy directory writable
-dkagent -m ./my-project -r -m ./workspace/my-copy gemini
-
-# Switch to the slim image
-dkagent -p slim claude
-
-# Pure mode, mount no host directories
-dkagent --no-mount
-
-# Docker commands usable inside the container (⚠️ highest risk, equals host root)
-dkagent --docker-socket claude
+dkagent                                # interactive Kali shell (mounts cwd)
+dkagent claude                         # wake up Claude Code inside the container
+dkagent -m ./a -r -m ./b gemini        # multi-dir mounts, a read-only, b writable
+dkagent -p slim claude                 # switch profile
+dkagent --docker-socket claude         # docker inside the container (⚠️ equals host root)
+dkagent --dry-run                      # print the docker run command, don't execute
 ```
-
-### Options
 
 | Option | Description |
 | :--- | :--- |
-| `-p, --profile NAME` | 🎚️ Select image profile (default `kali`; `slim` or custom available) |
-| `--image NAME` | 🐳 Specify any Docker image name (overrides `--profile`) |
-| `-e, --ephemeral` | 🧊 Use a temporary Home dir, leaves no trace on exit |
-| `-m, --mount DIR` | 📁 Mount a dir to `/home/kali/workspace/<basename>`; repeatable or space-separated |
-| `-r, --readonly` | 🔒 Place right after `-m` to mount that directory read-only |
-| `--no-mount` | 🟢 Mount no host directories (safest) |
-| `--docker-socket` | 🐋 Mount host docker.sock so the container can run docker (⚠️ **highest risk, equals host root**) |
-| `--no-tmux` | 🔌 Disable host tmux wrapping (SSH disconnect loses the process) |
-| `--tmux-name NAME` | 🔌 Custom tmux session name (default `dkagent-<cwd basename>`; duplicates get `_2`/`_3` suffix) |
-| `--env FILE` | Manually specify the `.env` config file |
-| `--lang zh\|en` | 🌐 Set the UI language (default: auto-detect from `$LANG`/`$LC_ALL`) |
-| `--dry-run` | 🔍 Print the `docker run` command without actually starting |
-| `-h, --help` | Show help |
+| `-p, --profile NAME` | image profile (default `kali`) |
+| `--image NAME` | any Docker image directly (highest priority) |
+| `-e, --ephemeral` | ephemeral Home, no trace on exit |
+| `-m, --mount DIR` / `-r` | mount a dir (repeatable); a trailing `-r` makes it read-only |
+| `--no-mount` | mount nothing from the host (safest) |
+| `--docker-socket` | mount host docker.sock (⚠️ **highest risk, equals host root**) |
+| `--port HOST:CONTAINER` | port mapping (repeatable, same as `docker run -p`), e.g. `8080:8080`, `127.0.0.1:3000:3000`, `9000:9000/udp` |
+| `--no-tmux` / `--tmux-name NAME` | disable / customize the tmux wrapper |
+| `--env FILE` | specify a `.env` file |
+| `--lang zh\|en` | UI language (auto-detected from `$LANG`/`$LC_ALL`; `export DKAGENT_LANG=en` persists) |
+| `--dry-run` | print the `docker run` command only, don't launch |
+| `-h, --help` | show help |
 
-**Image priority**: `--image` > `--profile` > env var `DKAGENT_PROFILE` > default `kali`
-
-**Agent names**: `claude` / `gemini` / `pi` / `codex` / `opencode`; empty enters an interactive zsh.
+**Image priority**: `--image` > `--profile` > env `DKAGENT_PROFILE` > default `kali`.
 
 ---
 
 ## Alternative: Docker Compose
 
-If you'd rather not use the `dkagent` CLI, you can launch directly via `docker compose`. All three modes share the same persistent Home volume (fully interoperable with the CLI).
-
-```bash
-# 🏠 Debug/shell mode — persistent Home only, no work dir mounted (🟢)
-docker compose run --rm agent-shell
-
-# 🧊 Pure/isolated mode — no mounts at all, ephemeral (🟢)
-docker compose run --rm agent-isolated
-
-# 📂 Sandbox mode — persistent Home + mount ./workspace (🟡)
-docker compose run --rm agent-sandboxed
-
-# Switch image (reuses the same Home volume)
-DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell
-```
+Prefer not to use the CLI? `docker compose run --rm` works too — all three modes share the same persistent Home volume (fully interchangeable with the CLI): `agent-shell` (Home only, 🟢) / `agent-isolated` (no mounts, ephemeral, 🟢) / `agent-sandboxed` (Home + `./workspace` mount, 🟡). Switch images: `DKAGENT_IMAGE=dkagent-slim docker compose run --rm agent-shell`.
 
 ---
 
-## Directory structure
+## Desktop Agent connections
+
+Desktop Agents (e.g. Zhipu's ZCode) can use this environment too. ZCode can connect **directly to a running container** (no exposed ports needed): the container name is `dkagent-<project dirname>` (e.g. `dkagent-my-project`), and the user inside is `kali`. For Agents that only support SSH, use `--port` at startup to map a container service port to the host and connect directly (e.g. `dkagent --port 2222:22 claude`, given a service is listening on that port inside) — no tunnel needed.
+
+---
+
+## Project structure
 
 ```
-.
-├── dkagent                  # core bash CLI (arg parsing, mounts, risk printing, sync subcommand)
-├── Dockerfile               # default profile (kali) build config
+├── dkagent                  # core bash CLI (mounts, risk tiers, sync subcommand)
+├── Dockerfile               # default profile (kali)
 ├── dockerfiles/
-│   ├── Dockerfile.slim      # slim profile build config (minimal Debian)
-│   └── Dockerfile.sync      # dkagent-sync image (rsync + ssh, for cross-host sync)
-├── docker-compose.yaml      # three alternative compose run modes
-├── install.sh               # one-shot install/uninstall script
+│   ├── Dockerfile.slim      # slim profile (minimal Debian)
+│   └── Dockerfile.sync      # dkagent-sync image (rsync + ssh, for cross-machine sync)
+├── docker-compose.yaml      # alternative compose run modes
+├── install.sh               # one-click install/uninstall
 ├── .env.example             # API keys config template
-└── workspace/               # work dir for sandbox mode (auto-created by Docker on first compose run)
+└── workspace/               # sandbox working dir
 ```
 
 ---
 
 ## Roadmap
 
-- [x] Multi-directory mount + per-directory read-only control
-- [x] 8-tier risk visualization
-- [x] Multiple image profiles
-- [x] Run Docker inside the container (`--docker-socket`)
-- [x] Bilingual UI (Chinese / English) with auto-detection
-- [x] Container naming by current dir (duplicate names get `_2`/`_3` suffix; disable with `DKAGENT_NO_CONTAINER_NAME=1`)
-- [x] **Multi-machine handoff sync** (`dkagent sync push/pull`, manual-only, rsync + retry + resumable)
-- [ ] **Network isolation tiers** (`--net off` / `--net strict` — simple and fit for multi-agent scenarios)
+- [x] Multi-dir mounts + per-directory read-only | [x] 8-tier risk visualization | [x] Multiple image profiles
+- [x] Docker inside the container (`--docker-socket`) | [x] Bilingual UI (auto-detected)
+- [x] Containers named after the cwd (`_2` `_3` suffix) | [x] Multi-machine handoff sync (`dkagent sync push/pull`, fully manual)
+- [ ] **Network isolation tiers** (`--net off` / `--net strict`)
+- [x] **Container port mapping** (`--port`; expose any container port to the host for external / desktop Agents)
 
 ---
 
