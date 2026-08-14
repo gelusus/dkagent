@@ -4,7 +4,7 @@
 
 > 一个 bash 命令，把任意目录变成隔离的 AI Agent 运行环境。
 
-基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Gemini CLI、Codex、Pi、OpenCode 五大 Agent，支持**逐目录只读挂载**、**多镜像 profile** 切换、tmux 断线重连与多机接力同步，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
+基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Antigravity（原 Gemini CLI）、Codex、Pi、OpenCode、DeepSeek Harness 六大 Agent，支持**逐目录只读挂载**、**多镜像 profile** 切换、tmux 断线重连与多机接力同步，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
 
 ---
 
@@ -17,7 +17,7 @@ dkagent -m ./original -r -m ./workspace/my-copy claude
 ```
 只读目录靠 Docker bind mount 钉在内核层——"参考 A 项目、改 B 项目"一行成立。
 
-**2. 多 Agent 统一入口**：Claude / Gemini / Codex / Pi / OpenCode 全装进同一个镜像，持久化 Home 卷保留登录凭证与配置，切换无感。
+**2. 多 Agent 统一入口**：Claude / Antigravity / Codex / Pi / OpenCode / DeepSeek Harness 全装进同一个镜像，持久化 Home 卷保留登录凭证与配置，切换无感。
 
 **3. Kali 工具链开箱即用**：默认镜像基于 Kali Linux（nmap、ripgrep、Playwright 等全套）；要轻量就切 `slim` profile（Debian slim，小三分之二）。
 
@@ -66,7 +66,7 @@ dkagent -p slim claude --dangerously-skip-permissions
 
 ## 环境变量注入（.env）
 
-dkagent 会自动查找 `.env` 文件，把其中每行 `KEY=value` 以环境变量注入容器（Agent 与脚本都能读到）。查找顺序：`$DKAGENT_ENV` 指定的路径 → `~/.config/dkagent/.env` → 脚本所在目录的 `.env`。
+dkagent 会自动查找 `.env` 文件，把其中每行 `KEY=value` 注入容器（Agent 与脚本都能读到）。查找顺序：`$DKAGENT_ENV` 指定的路径 → `~/.config/dkagent/.env`。
 
 ```bash
 # 每次进入前，把物理机上的 env 文件复制为 .env，dkagent 自动注入
@@ -74,7 +74,9 @@ cp ~/projects/secrets.env ~/.config/dkagent/.env
 dkagent claude        # 容器内可直接读到 .env 里的所有 KEY
 ```
 
-宿主机已导出的 `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` 会覆盖 `.env` 同名项直接透传；空行与 `#` 注释自动跳过。
+宿主机已导出的 `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `DEEPSEEK_API_KEY` 会覆盖 `.env` 同名项直接透传；空行与 `#` 注释自动跳过。
+
+**安全传递**：环境变量经**临时 `--env-file`**（0600、运行结束即删）传给 docker——不出现在宿主进程列表（`ps`）与命令行回显中；`--dry-run` 输出里环境变量默认打码为 `KEY=***`，设 `DKAGENT_DRY_RUN_SHOW_SECRETS=1` 才显示明文。旧版回退读取“脚本所在目录 `.env`”的行为已移除（防止 repo 目录被种入 `.env` 劫持后续运行）。注意：Agent 命令以 `zsh -f` 启动，**zsh 启动文件（`.zshenv` 等）里的变量不会传给 Agent**——需要注入请用 `.env`。
 
 ---
 
@@ -137,11 +139,18 @@ AI Agent 在执行任务时拥有强大的文件系统权限。为防止 Agent �
 
 > [!CAUTION]
 > **关于 Home 卷持久化的安全提示 (🏠)**:
-> 持久化 Home 卷会保留你的 Oh-My-Zsh 配置、命令历史及 Agent 的会话 Session。如果 Agent 被外部恶意控制，理论上可能通过修改你持久化的 `.zshrc` 来埋下后门。若对运行安全性有极端要求，推荐加 `-e`（用完即焚）选项。
+> 持久化 Home 卷会保留你的 Oh-My-Zsh 配置、命令历史及 Agent 的会话 Session。如果 Agent 被外部恶意控制，理论上可能通过修改持久化 Home 的 zsh 启动文件（`.zshenv` / `.zprofile`）来埋后门。为此 **Agent 命令一律以 `zsh -f` 启动（不读任何启动文件）**，但 `dkagent` 交互 shell 模式仍会 source `.zshrc`（保留用户配置，属已知权衡）——交互模式下请勿运行不可信内容。对安全性有极端要求时，推荐加 `-e`（用完即焚）选项。
 
 > [!CAUTION]
 > **关于 `--docker-socket` 的安全提示 (☠️)**:
 > `--docker-socket` 会挂载宿主机的 `/var/run/docker.sock` 到容器内。**这等同于把宿主机 root 权限交给容器**——容器内可任意控制宿主 Docker（包括 `docker run -v /:/host` 读写宿主根文件系统）。仅在你完全信任 Agent 且确实需要在容器内运行 docker 命令时使用。
+
+> [!CAUTION]
+> **关于 `--net host` 的安全提示 (🌐)**:
+> `--net host` 共享宿主网络命名空间——**容器与宿主网络完全互通、无隔离**：容器内端口即宿主端口（双向可达），容器内任何网络监听（包括 RCE 级 API 如 `dsh web`）都会直接暴露到宿主网络。与 `--docker-socket` 同级对待，**启动时脚本会打印风险提示**；仅在你完全信任容器内程序时使用。常规端口暴露请用 `--port`（保持 bridge 隔离）。
+
+> [!WARNING]
+> **Docker Desktop 的宿主回环通道（实测）**: Docker Desktop（Windows / macOS / WSL2 后端）默认向容器注入 `host.docker.internal`（指向 Docker 虚拟机网关，如 `192.168.65.254`）。**实测：bridge 容器经它可以触达宿主机/物理机只绑 `127.0.0.1` 的服务**（Windows 与 WSL2 发行版的 loopback-only 监听均被触达）——bridge 隔离并不保护宿主机的 loopback 端口，宿主机上敏感的本机服务（本地 API、开发服务器等）对容器是可见的。原生 Linux Docker 无此默认注入（需手动 `--add-host`）。要彻底阻断容器→宿主的网络通道，用 `--net off`（实测连解析都不通）。
 
 ---
 
@@ -155,6 +164,8 @@ AI Agent 在执行任务时拥有强大的文件系统权限。为防止 Agent �
 | Codex | `~/.codex/` | `~/.codex/auth.json` | 文件不存在说明走 keychain，无法迁移 |
 | OpenCode | `~/.config/opencode/` + `~/.local/share/opencode/` | `~/.local/share/opencode/auth.json` | 两个目录都要拷 |
 | Pi | `~/.pi/agent/` | `~/.pi/agent/auth.json` | |
+| Antigravity | `~/.antigravitycli/` | 登录态存系统钥匙串 | 无法用文件迁移，容器内重新登录（终端输出授权链接 + 验证码） |
+| DeepSeek Harness | `~/.dsh/`（`$DSH_HOME` 默认值） | `~/.dsh/.credentials.yaml` | Web UI 里填的 key 存此文件；更省事是直接配 `.env` 的 `DEEPSEEK_API_KEY`，无需迁移 |
 
 ```bash
 # 通用模板：把宿主 <src> 拷贝进持久化卷（替换为表中对应路径）
@@ -163,7 +174,7 @@ docker run --rm -v agent_docker_kali-home:/home/kali -v "$HOME/<src>:/src:ro" \
 ```
 
 > [!WARNING]
-> **注意事项**：Gemini 建议容器内重新登录（凭证加密绑定 hostname + username，迁移后大概率解不开）；命令会覆盖容器内同名文件，先备份；macOS keychain 凭证无法用文件迁移；迁移后凭证读不到通常是属主不对，进容器 `sudo chown -R kali:kali ~/.对应目录` 修复。
+> **注意事项**：Antigravity 建议容器内重新登录（登录态存系统钥匙串，迁移后大概率解不开；终端会输出授权链接 + 验证码流程）；命令会覆盖容器内同名文件，先备份；macOS keychain 凭证无法用文件迁移；迁移后凭证读不到通常是属主不对，进容器 `sudo chown -R kali:kali ~/.对应目录` 修复。
 
 ---
 
@@ -228,20 +239,23 @@ dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # 透传 rsync 参�
 
 **配置文件**：`~/.config/dkagent/peers`（peer 列表）、`~/.config/dkagent/sync-mapping`（项目路径映射，脚本自动管理，也可 vi 编辑）。
 
+**安全约束**：peer 用户名/主机与远端路径仅允许字母数字及 `. _ - / ~`（不支持空格，防经 rsync 远端 shell 注入）；peers 文件权限非 600 时运行会告警；首次卷同步会记录 `dkagent-sync` 镜像指纹（`~/.config/dkagent/sync-image.id`），镜像被替换时**拒绝执行**——确为本人重建镜像时删除该文件即可重新信任；容器内只挂载本机 ssh 实际会用到的身份文件（经 `ssh -G` 解析）或 SSH agent socket，不再整目录挂载 `~/.ssh`。
+
 ---
 
 ## 命令行使用说明
 
 ```bash
-dkagent [选项] [agent名称] [附加参数...]    # agent: claude/gemini/pi/codex/opencode，留空进 zsh
+dkagent [选项] [agent名称] [附加参数...]    # agent: claude/antigravity/pi/codex/opencode/deepseek，留空进 zsh
 ```
 
 ```bash
 dkagent                                # 交互式 Kali shell（挂载当前目录）
 dkagent claude                         # 唤醒容器内 Claude Code
-dkagent -m ./a -r -m ./b gemini        # 多目录挂载，a 只读 b 可写
+dkagent -m ./a -r -m ./b antigravity   # 多目录挂载，a 只读 b 可写
 dkagent -p slim claude                 # 切换 profile
 dkagent --docker-socket claude         # 容器内可用 docker（⚠️ 等同宿主 root）
+dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI 端口映射
 dkagent --dry-run                      # 只打印 docker run 命令不执行
 ```
 
@@ -254,13 +268,63 @@ dkagent --dry-run                      # 只打印 docker run 命令不执行
 | `--no-mount` | 不挂载任何宿主机目录（最安全） |
 | `--docker-socket` | 挂载宿主 docker.sock（⚠️ **最高风险，等同宿主 root**） |
 | `--port HOST:CONTAINER` | 端口映射（可重复，等价 `docker run -p`），如 `8080:8080`、`127.0.0.1:3000:3000`、`9000:9000/udp` |
+| `--net MODE` | 网络模式（默认 bridge）：`off` 完全断网（`--network none`，无任何网络接口，外网/宿主端口全不可达，最安全）；`host` 共享宿主网络（`--network host`），⚠️ 无网络隔离、启动时打印风险提示；两种模式 `--port` 均无效 |
 | `--no-tmux` / `--tmux-name NAME` | 关闭 / 自定义 tmux 包装 |
 | `--env FILE` | 指定 `.env` 配置文件 |
 | `--lang zh\|en` | 界面语言（默认按 `$LANG`/`$LC_ALL` 自动识别；`export DKAGENT_LANG=en` 持久覆盖） |
-| `--dry-run` | 仅打印 `docker run` 命令，不实际启动 |
+| `--dry-run` | 仅打印 `docker run` 命令，不实际启动（环境变量打码，`DKAGENT_DRY_RUN_SHOW_SECRETS=1` 显明文） |
 | `-h, --help` | 显示帮助 |
 
 **镜像优先级**：`--image` > `--profile` > 环境变量 `DKAGENT_PROFILE` > 默认 `kali`。
+
+---
+
+## 端口映射实战：DeepSeek Harness 开 Web 界面
+
+DeepSeek Harness（`deepseek`，命令 `dsh`）既有终端 CLI，也自带 Web UI。**默认安全姿势**：`dsh web` 只绑 `127.0.0.1`（官方安全默认——Web API 可执行 bash，属 RCE 级接口），仅容器内可达；不想开 Web 就直接用 CLI 形式（见要点）。要把它暴露到宿主，两种方式：
+
+**方式一：`--port` 端口映射（✅ 推荐：保持 bridge 隔离，暴露面只有你映射的那个端口）**
+
+```bash
+# 第一次：进容器建配置（opt-in——绑 0.0.0.0 后 Web 才对容器外可见）
+dkagent
+mkdir -p ~/.dsh && cat > ~/.dsh/cordis.patch.yml <<'EOF'
+- id: webserver
+  config:
+    host: 0.0.0.0
+    port: 3080
+EOF
+# 之后每次：
+dkagent --port 3080:3080 deepseek web
+# 浏览器打开 http://localhost:3080 即可使用（Docker 桌面版 / 局域网机器同理）
+```
+
+> ⚠️ **安全提示**：docker 的 `-p`/`-P` 端口映射把流量转发到**容器 eth0 的 IP**，容器内只监听 `127.0.0.1` 的服务收不到包（实测 5/5 全拒），且当前版本 dsh 的 CLI **故意拒绝 `--host 0.0.0.0`**——所以必须经配置层放开绑定。**一旦绑 0.0.0.0 并映射端口，RCE 级 Web API 就对局域网可见**；用完建议关掉容器，或删除 patch 恢复 loopback。
+
+**方式二：`--net host` 共享宿主网络（⚠️ 最后手段：无网络隔离）**
+
+```bash
+dkagent --net host deepseek web
+# 浏览器打开 http://localhost:3080（无需 --port；此模式下 docker 忽略端口映射）
+```
+
+`--network host` 下容器与宿主共享网络命名空间（官方文档确认），容器内 `127.0.0.1` 就是宿主的 `127.0.0.1`——dsh 保持默认 loopback 绑定即可直接访问。但注意：**它比方式一危险得多**——方式一的容器只能访问你映射的那一个端口，而 host 模式容器与宿主网络完全互通，**可以访问宿主机全部端口与服务，还能直接绑定宿主端口**，属高风险操作，启动时脚本会打印风险提示（见[安全模型](#安全模型一眼看懂你给了-agent-多大权限)）。能不用就不用。
+
+**最安全档：完全断网跑 CLI（`--net off`）**
+
+```bash
+dkagent --net off deepseek --profile headless "跑一下测试"
+```
+
+`--network none` 下容器无任何网络接口——外网、宿主端口（包括 Docker Desktop 的 `host.docker.internal` 回环通道）全部不可达，只靠挂载目录干活。不开 Web、不联网的任务建议都用这档。
+
+> ⚠️ **平台注意（实测）**：WSL2 + Docker Desktop 下 `--network host` 挂到的是 **Docker 虚拟机（docker-desktop distro，192.168.65.x）的命名空间**，不是你的 WSL2 发行版——容器内的 `127.0.0.1` 在你的终端不可达（实测 curl 全拒）。原生 Linux Docker 上则正常共享宿主 netns。Docker Desktop 环境请用方式一 `--port`。
+
+要点：
+- **API Key**：启动后浏览器里 Settings → Models 填入（存 `~/.dsh/.credentials.yaml`，随 Home 卷持久化），或直接写进 `~/.config/dkagent/.env`（`DEEPSEEK_API_KEY=sk-...`，dkagent 自动注入容器）
+- **换端口**：改 `~/.dsh/cordis.patch.yml` 里的 `port`，与 `--port` 映射（方式一）一起改
+- **CLI 形式**：`dkagent deepseek --profile headless "跑一下测试"`（一次性任务，完全不暴露端口）；交互 TUI 用 `dsh --profile tui`
+- 加 `-e`（用完即焚）跑 Web UI 也完全没问题，关掉容器不留任何状态（临时 Home 不保留 patch，需每次重建）
 
 ---
 
@@ -297,7 +361,7 @@ dkagent --dry-run                      # 只打印 docker run 命令不执行
 - [x] 多目录挂载 + 逐目录只读控制 ｜ [x] 8 档风险分级可视化 ｜ [x] 多镜像 profile 切换
 - [x] 容器内运行 Docker（`--docker-socket`） ｜ [x] 中英文双语界面（自动识别）
 - [x] 容器命名按当前目录（重名 `_2` `_3` 后缀） ｜ [x] 多机接力同步（`dkagent sync push/pull`，纯手动）
-- [ ] **网络隔离档位**（`--net off` / `--net strict`）
+- [x] 断网档位（`--net off`，`--network none` 完全断网，实测可阻断 Docker Desktop 的 `host.docker.internal` 回环通道） ｜ [ ] 出站限制档位（`--net strict`：默认拒绝 + 白名单；注意若策略是"只断外网、放行内网"，Docker Desktop 网关地址仍可达宿主回环，须显式处理）
 - [x] **容器端口映射**（`--port`，映射容器内任意端口到宿主机，供外部 / 桌面 Agent 通信）
 
 ---

@@ -4,7 +4,7 @@
 
 > One bash command turns any directory into an isolated AI Agent runtime.
 
-A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Claude Code, Gemini CLI, Codex, Pi, and OpenCode pre-installed. Supports **per-directory read-only mounts**, **multiple image profiles**, tmux auto-reconnect and multi-machine handoff sync, and uses 🟢🟡🔴 colors so you can see at a glance how much power you've handed the Agent each run.
+A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Claude Code, Antigravity (successor to Gemini CLI), Codex, Pi, OpenCode, and DeepSeek Harness pre-installed. Supports **per-directory read-only mounts**, **multiple image profiles**, tmux auto-reconnect and multi-machine handoff sync, and uses 🟢🟡🔴 colors so you can see at a glance how much power you've handed the Agent each run.
 
 ---
 
@@ -17,7 +17,7 @@ dkagent -m ./original -r -m ./workspace/my-copy claude
 ```
 Read-only dirs are pinned at the kernel level via Docker bind mounts — the "reference project A, edit project B" scenario works in one line.
 
-**2. Unified entry point for multiple Agents**: Claude / Gemini / Codex / Pi / OpenCode are all bundled into one image. The persistent Home volume keeps every Agent's login credentials and configs — seamless switching.
+**2. Unified entry point for multiple Agents**: Claude / Antigravity / Codex / Pi / OpenCode / DeepSeek Harness are all bundled into one image. The persistent Home volume keeps every Agent's login credentials and configs — seamless switching.
 
 **3. Kali toolchain out of the box**: the default image is based on Kali Linux (nmap, ripgrep, Playwright, full toolkit). Need lighter? Switch to the `slim` profile (Debian slim, roughly two-thirds smaller).
 
@@ -66,7 +66,7 @@ dkagent -p slim claude --dangerously-skip-permissions
 
 ## Environment injection (.env)
 
-dkagent auto-discovers a `.env` file and injects each `KEY=value` line as an environment variable into the container (visible to Agents and scripts). Search order: path from `$DKAGENT_ENV` → `~/.config/dkagent/.env` → `.env` next to the script.
+dkagent auto-discovers a `.env` file and injects each `KEY=value` line as an environment variable into the container (visible to Agents and scripts). Search order: path from `$DKAGENT_ENV` → `~/.config/dkagent/.env`.
 
 ```bash
 # Before entering, copy your host's env file to .env — dkagent injects it automatically
@@ -74,7 +74,9 @@ cp ~/projects/secrets.env ~/.config/dkagent/.env
 dkagent claude        # every KEY in .env is readable inside the container
 ```
 
-Host-exported `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` override same-named `.env` entries; blank lines and `#` comments are skipped.
+Host-exported `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` / `DEEPSEEK_API_KEY` override same-named `.env` entries; blank lines and `#` comments are skipped.
+
+**Secure transport**: env vars are passed via a **temporary `--env-file`** (mode 0600, deleted after the run) — they never appear in the host process list (`ps`) or command-line echoes; in `--dry-run` output env vars are masked as `KEY=***` by default, set `DKAGENT_DRY_RUN_SHOW_SECRETS=1` to reveal them. The legacy fallback that read a `.env` next to the script has been removed (a planted `.env` in the repo must no longer be able to hijack later runs). Note: Agent commands start with `zsh -f`, so **variables from zsh startup files (`.zshenv`, etc.) are not passed to Agents** — use `.env` for injection.
 
 ---
 
@@ -137,11 +139,18 @@ AI Agents hold powerful filesystem permissions during a task. To prevent an Agen
 
 > [!CAUTION]
 > **About persistent Home volume safety (🏠)**:
-> The persistent Home volume keeps your Oh-My-Zsh config, command history, and Agent session state. If an Agent is taken over by a malicious external actor, it could theoretically plant a backdoor via your persisted `.zshrc`. If you have extreme safety requirements, add the `-e` (ephemeral) flag.
+> The persistent Home volume keeps your Oh-My-Zsh config, command history, and Agent session state. If an Agent is taken over by a malicious external actor, it could theoretically plant a backdoor via the persistent Home's zsh startup files (`.zshenv` / `.zprofile`). To counter this, **Agent commands always start with `zsh -f` (no startup files are read)** — but the `dkagent` interactive shell mode still sources `.zshrc` (keeping user config, a known trade-off), so don't run untrusted content in interactive mode. If you have extreme safety requirements, add the `-e` (ephemeral) flag.
 
 > [!CAUTION]
 > **About `--docker-socket` safety (☠️)**:
 > `--docker-socket` mounts the host's `/var/run/docker.sock` into the container. **This is equivalent to handing host root to the container** — inside, you can fully control host Docker (including `docker run -v /:/host` to read/write the host root filesystem). Use it only when you fully trust the Agent and genuinely need docker commands inside the container.
+
+> [!CAUTION]
+> **About `--net host` safety (🌐)**:
+> `--net host` shares the host network namespace — **container and host networks are fully shared with no isolation**: container ports are host ports (reachable from both directions), and any network listener inside (including RCE-grade APIs like `dsh web`) is directly exposed to the host network. Treated like `--docker-socket`: **the script prints a risk warning at startup**; use only when you fully trust what runs inside the container. For regular port exposure prefer `--port` (keeps bridge isolation).
+
+> [!WARNING]
+> **Docker Desktop's host loopback channel (verified)**: Docker Desktop (Windows / macOS / WSL2 backend) injects `host.docker.internal` into containers by default (pointing at the Docker VM gateway, e.g. `192.168.65.254`). **Verified: a bridge container can reach the host machine's `127.0.0.1`-only services through it** (loopback-only listeners on both Windows and the WSL2 distro were reached) — bridge isolation does NOT protect the host's loopback ports; sensitive local services (local APIs, dev servers, etc.) on the host are visible to containers. Native Linux Docker has no such default injection (you'd add `--add-host` yourself). To fully cut the container→host network channel, use `--net off` (verified: not even DNS resolution works).
 
 ---
 
@@ -155,6 +164,8 @@ Already logged into an Agent on the host? Copy the login state into the persiste
 | Codex | `~/.codex/` | `~/.codex/auth.json` | if missing, credentials live in keychain — not migratable |
 | OpenCode | `~/.config/opencode/` + `~/.local/share/opencode/` | `~/.local/share/opencode/auth.json` | two dirs, copy both |
 | Pi | `~/.pi/agent/` | `~/.pi/agent/auth.json` | |
+| Antigravity | `~/.antigravitycli/` | login state lives in the OS keychain | not migratable as files — re-login inside the container (the terminal prints an authorization link + code) |
+| DeepSeek Harness | `~/.dsh/` (default `$DSH_HOME`) | `~/.dsh/.credentials.yaml` | keys entered in the Web UI live here; simpler: set `DEEPSEEK_API_KEY` in `.env`, no migration needed |
 
 ```bash
 # Generic template: copy host <src> into the persistent volume (substitute paths from the table)
@@ -163,7 +174,7 @@ docker run --rm -v agent_docker_kali-home:/home/kali -v "$HOME/<src>:/src:ro" \
 ```
 
 > [!WARNING]
-> **Notes**: re-login to Gemini inside the container instead (its credentials are encrypted and bound to hostname + username, likely unreadable after migration); the commands overwrite same-named files inside the container — back up first; macOS keychain credentials can't be migrated as files; if credentials become unreadable after migration it's usually an ownership issue — fix with `sudo chown -R kali:kali ~/.<dir>` inside the container.
+> **Notes**: re-login to Antigravity inside the container instead (its login state lives in the OS keychain, likely unreadable after migration; the terminal prints an authorization link + code flow); the commands overwrite same-named files inside the container — back up first; macOS keychain credentials can't be migrated as files; if credentials become unreadable after migration it's usually an ownership issue — fix with `sudo chown -R kali:kali ~/.<dir>` inside the container.
 
 ---
 
@@ -228,20 +239,23 @@ dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # pass through rsyn
 
 **Config files**: `~/.config/dkagent/peers` (peer list), `~/.config/dkagent/sync-mapping` (path mapping; auto-managed by the script, but editable by hand).
 
+**Security constraints**: peer user/host and remote paths may only contain alphanumerics and `. _ - / ~` (no spaces — prevents injection via the rsync remote shell); a peers file whose mode is not 600 triggers a warning; the first volume sync records the `dkagent-sync` image fingerprint (`~/.config/dkagent/sync-image.id`) and **refuses to run** if the image is ever replaced — delete that file to re-trust after a deliberate rebuild; the container only mounts the identity files your local ssh would actually use (resolved via `ssh -G`) or the SSH agent socket — the whole `~/.ssh` directory is no longer mounted.
+
 ---
 
 ## Command-line reference
 
 ```bash
-dkagent [options] [agent] [extra args...]    # agent: claude/gemini/pi/codex/opencode; empty → interactive zsh
+dkagent [options] [agent] [extra args...]    # agent: claude/antigravity/pi/codex/opencode/deepseek; empty → interactive zsh
 ```
 
 ```bash
 dkagent                                # interactive Kali shell (mounts cwd)
 dkagent claude                         # wake up Claude Code inside the container
-dkagent -m ./a -r -m ./b gemini        # multi-dir mounts, a read-only, b writable
+dkagent -m ./a -r -m ./b antigravity   # multi-dir mounts, a read-only, b writable
 dkagent -p slim claude                 # switch profile
 dkagent --docker-socket claude         # docker inside the container (⚠️ equals host root)
+dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI via port mapping
 dkagent --dry-run                      # print the docker run command, don't execute
 ```
 
@@ -254,13 +268,64 @@ dkagent --dry-run                      # print the docker run command, don't exe
 | `--no-mount` | mount nothing from the host (safest) |
 | `--docker-socket` | mount host docker.sock (⚠️ **highest risk, equals host root**) |
 | `--port HOST:CONTAINER` | port mapping (repeatable, same as `docker run -p`), e.g. `8080:8080`, `127.0.0.1:3000:3000`, `9000:9000/udp` |
+| `--net MODE` | network mode (default: bridge): `off` = no network at all (`--network none`; no network interfaces, internet and host ports unreachable — safest); `host` = share the host network (`--network host`), ⚠️ no isolation, risk warning printed at startup; `--port` has no effect in either mode |
 | `--no-tmux` / `--tmux-name NAME` | disable / customize the tmux wrapper |
 | `--env FILE` | specify a `.env` file |
 | `--lang zh\|en` | UI language (auto-detected from `$LANG`/`$LC_ALL`; `export DKAGENT_LANG=en` persists) |
-| `--dry-run` | print the `docker run` command only, don't launch |
+| `--dry-run` | print the `docker run` command only, don't launch (env vars masked; `DKAGENT_DRY_RUN_SHOW_SECRETS=1` reveals them) |
 | `-h, --help` | show help |
 
 **Image priority**: `--image` > `--profile` > env `DKAGENT_PROFILE` > default `kali`.
+
+---
+
+## Port-mapping in action: DeepSeek Harness Web UI
+
+DeepSeek Harness (`deepseek`, command `dsh`) has both a terminal CLI and a built-in Web UI. **The safe default**: `dsh web` binds `127.0.0.1` only (an official safety default — the Web API can execute bash, i.e. RCE-grade), reachable only inside the container; no Web needed? Use the CLI form (see key points). Two ways to expose it to the host:
+
+**Option 1: `--port` port mapping (✅ recommended: keeps bridge isolation; the only exposure is the port you publish)**
+
+```bash
+# First time: enter the container and create the config (opt-in — the Web becomes
+# visible outside the container only after binding 0.0.0.0)
+dkagent
+mkdir -p ~/.dsh && cat > ~/.dsh/cordis.patch.yml <<'EOF'
+- id: webserver
+  config:
+    host: 0.0.0.0
+    port: 3080
+EOF
+# From then on:
+dkagent --port 3080:3080 deepseek web
+# open http://localhost:3080 in your browser (same from Docker Desktop / LAN machines)
+```
+
+> ⚠️ **Security note**: Docker's `-p`/`-P` port mapping forwards traffic to the **container's eth0 IP**, so a service listening only on `127.0.0.1` inside never sees it (verified: 5/5 connection failures), and the current dsh CLI **deliberately rejects `--host 0.0.0.0`** — hence the config-layer opt-in. **Once bound to 0.0.0.0 and published, the RCE-grade Web API is visible to the LAN**; when done, close the container or delete the patch to restore loopback.
+
+**Option 2: `--net host` (⚠️ last resort: no network isolation)**
+
+```bash
+dkagent --net host deepseek web
+# open http://localhost:3080 (no --port needed; docker ignores port mappings in this mode)
+```
+
+With `--network host` the container shares the host's network namespace (confirmed by the official docs), so the container's `127.0.0.1` IS the host's `127.0.0.1` — dsh's default loopback bind is directly reachable. But note: **it is far more dangerous than Option 1** — an Option-1 container can only reach the one port you published, while a host-mode container shares the host network entirely: **it can reach ALL host ports and services, and can bind host ports directly**. High risk; the script prints a risk warning at startup (see the [safety model](#safety-model-see-how-much-power-you-gave-the-agent-at-a-glance)). Avoid it when you can.
+
+**Safest tier: fully offline CLI (`--net off`)**
+
+```bash
+dkagent --net off deepseek --profile headless "run the tests"
+```
+
+With `--network none` the container has no network interfaces at all — the internet and all host ports (including Docker Desktop's `host.docker.internal` loopback channel) are unreachable; it works purely through mounted directories. Use this tier for any task that needs no Web UI and no network.
+
+> ⚠️ **Platform note (verified)**: on WSL2 + Docker Desktop, `--network host` attaches to the **Docker VM's namespace** (docker-desktop distro, 192.168.65.x), NOT your WSL2 distro — the container's `127.0.0.1` is unreachable from your terminal (verified: all curls refused). On native Linux Docker it shares the host netns as expected. On Docker Desktop, use Option 1 (`--port`).
+
+Key points:
+- **API key**: after startup, enter it in the browser under Settings → Models (stored in `~/.dsh/.credentials.yaml`, persisted in the Home volume), or simply put `DEEPSEEK_API_KEY=sk-...` in `~/.config/dkagent/.env` (dkagent injects it into the container automatically)
+- **Change the port**: edit the `port` in `~/.dsh/cordis.patch.yml`, and update the `--port` mapping (Option 1) accordingly
+- **CLI form**: `dkagent deepseek --profile headless "run the tests"` (one-shot task, exposes no port at all); interactive TUI via `dsh --profile tui`
+- Adding `-e` (ephemeral) for the Web UI works fine too — close the container and no state remains (the ephemeral Home doesn't keep the patch; recreate it each time)
 
 ---
 
@@ -297,7 +362,7 @@ Desktop Agents (e.g. Zhipu's ZCode) can use this environment too. ZCode can conn
 - [x] Multi-dir mounts + per-directory read-only | [x] 8-tier risk visualization | [x] Multiple image profiles
 - [x] Docker inside the container (`--docker-socket`) | [x] Bilingual UI (auto-detected)
 - [x] Containers named after the cwd (`_2` `_3` suffix) | [x] Multi-machine handoff sync (`dkagent sync push/pull`, fully manual)
-- [ ] **Network isolation tiers** (`--net off` / `--net strict`)
+- [x] Offline tier (`--net off`, `--network none` — fully offline; verified to block Docker Desktop's `host.docker.internal` loopback channel) | [ ] Egress-restriction tier (`--net strict`: default-deny + allowlist; note: a "block internet, allow LAN" policy still leaves the Docker Desktop gateway address able to reach the host loopback — must be handled explicitly)
 - [x] **Container port mapping** (`--port`; expose any container port to the host for external / desktop Agents)
 
 ---
