@@ -26,8 +26,9 @@ RUN sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master
     sed -i 's/plugins=(git)/plugins=(git zsh-autosuggestions zsh-completions)/' ~/.zshrc
 
 # 安装依赖和 Playwright
+# 注: build-essential + python3 供 node-gyp 编译原生依赖（DeepSeek Harness 的 node-pty 无预编译产物）
 RUN sudo apt update && \
-    sudo apt install -y bsdextrautils npm jq iputils-ping sshpass ncat rlwrap docker-cli && \
+    sudo apt install -y bsdextrautils npm jq iputils-ping sshpass ncat rlwrap docker-cli build-essential python3 && \
     sudo apt clean && \
     sudo rm -rf /var/lib/apt/lists/* && \
     sudo npm install -g @playwright/cli@latest && \
@@ -44,10 +45,14 @@ RUN FD_TAG=$(curl -fsSL https://api.github.com/repos/sharkdp/fd/releases/latest 
         sudo tar xz -C /usr/local/bin --strip-components=1 ripgrep-${RG_TAG}-x86_64-unknown-linux-musl/rg
 
 # 安装各类 AI Agent CLI
+# 注: Antigravity（agy，Google Gemini CLI 的继任者，登录走 Google 账号 OAuth）与 Claude 一样
+#     走 curl 安装脚本，落在 ~/.local/bin；DeepSeek Harness（dsh，Web UI 默认 127.0.0.1:3080）
+#     依赖 node-pty，需要上方 build-essential + python3 从源码编译
 RUN sudo npm install -g @openai/codex && \
     curl -fsSL https://claude.ai/install.sh | bash && \
     sudo npm install -g @earendil-works/pi-coding-agent && \
-    sudo npm install -g @google/gemini-cli && \
+    curl -fsSL https://antigravity.google/cli/install.sh | bash && \
+    sudo npm install -g @deepseek-ai/dsh && \
     sudo npm install -g opencode-ai@latest
 ENV PATH="/home/kali/.local/bin:${PATH}"
 
