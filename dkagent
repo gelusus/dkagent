@@ -751,7 +751,7 @@ sync_volume() {
     # SSH 凭据最小化挂载（不再整目录挂 ~/.ssh，缩小镜像被替换时的凭据暴露面）：
     #   - 有 agent（SSH_AUTH_SOCK）时只挂 agent socket，私钥文件不进容器
     #   - 无 agent 时经 ssh -G 解析本机 ssh 实际会用的身份文件，只挂这些私钥（:ro）
-    #   - known_hosts 始终只读挂载（accept-new 写不进去仅告警，不影响连接）
+    #   - known_hosts 可写挂载（首连新 peer 由 accept-new 自动落盘回宿主机，无告警；私钥仍只读）
     local ssh_mount_args=() id_opts="" idfile idbase
     if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
         ssh_mount_args+=(-v "${SSH_AUTH_SOCK}:${SSH_AUTH_SOCK}" -e "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
@@ -767,7 +767,7 @@ sync_volume() {
                  | awk 'tolower($1)=="identityfile"{ $1=""; sub(/^[ \t]+/,""); print }' | sort -u)
     fi
     if [[ -f "$HOME/.ssh/known_hosts" ]]; then
-        ssh_mount_args+=(-v "${HOME/.ssh/known_hosts}:/root/.ssh/known_hosts:ro")
+        ssh_mount_args+=(-v "${HOME}/.ssh/known_hosts:/root/.ssh/known_hosts")
     fi
 
     local attempt
