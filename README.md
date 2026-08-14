@@ -4,7 +4,7 @@
 
 > 一个 bash 命令，把任意目录变成隔离的 AI Agent 运行环境。
 
-基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Antigravity（原 Gemini CLI）、Codex、Pi、OpenCode、DeepSeek Harness 六大 Agent，支持**逐目录只读挂载**、**多镜像 profile** 切换、tmux 断线重连与多机接力同步，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
+基于 Docker 的 AI Agent CLI 运行沙箱。一行命令拉起容器，内置 Claude Code、Antigravity（`agy`）、Codex、Pi、OpenCode、DeepSeek Harness（`dsh`）六大 Agent，支持**逐目录只读挂载**、**多镜像 profile** 切换、tmux 断线重连与多机接力同步，并用 🟢🟡🔴 三色让你一眼看清每次给了 Agent 多大权限。
 
 ---
 
@@ -17,7 +17,7 @@ dkagent -m ./original -r -m ./workspace/my-copy claude
 ```
 只读目录靠 Docker bind mount 钉在内核层——"参考 A 项目、改 B 项目"一行成立。
 
-**2. 多 Agent 统一入口**：Claude / Antigravity / Codex / Pi / OpenCode / DeepSeek Harness 全装进同一个镜像，持久化 Home 卷保留登录凭证与配置，切换无感。
+**2. 多 Agent 统一入口**：Claude / Antigravity（`agy`）/ Codex / Pi / OpenCode / DeepSeek Harness（`dsh`）全装进同一个镜像，持久化 Home 卷保留登录凭证与配置，切换无感。
 
 **3. Kali 工具链开箱即用**：默认镜像基于 Kali Linux（nmap、ripgrep、Playwright 等全套）；要轻量就切 `slim` profile（Debian slim，小三分之二）。
 
@@ -246,16 +246,16 @@ dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # 透传 rsync 参�
 ## 命令行使用说明
 
 ```bash
-dkagent [选项] [agent名称] [附加参数...]    # agent: claude/antigravity/pi/codex/opencode/deepseek，留空进 zsh
+dkagent [选项] [agent名称] [附加参数...]    # agent: claude/agy/pi/codex/opencode/dsh，留空进 zsh
 ```
 
 ```bash
 dkagent                                # 交互式 Kali shell（挂载当前目录）
 dkagent claude                         # 唤醒容器内 Claude Code
-dkagent -m ./a -r -m ./b antigravity   # 多目录挂载，a 只读 b 可写
+dkagent -m ./a -r -m ./b agy            # 多目录挂载，a 只读 b 可写
 dkagent -p slim claude                 # 切换 profile
 dkagent --docker-socket claude         # 容器内可用 docker（⚠️ 等同宿主 root）
-dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI 端口映射
+dkagent --port 3080:3080 dsh web        # 🌐 DeepSeek Harness Web UI 端口映射
 dkagent --dry-run                      # 只打印 docker run 命令不执行
 ```
 
@@ -281,7 +281,7 @@ dkagent --dry-run                      # 只打印 docker run 命令不执行
 
 ## 端口映射实战：DeepSeek Harness 开 Web 界面
 
-DeepSeek Harness（`deepseek`，命令 `dsh`）既有终端 CLI，也自带 Web UI。**默认安全姿势**：`dsh web` 只绑 `127.0.0.1`（官方安全默认——Web API 可执行 bash，属 RCE 级接口），仅容器内可达；不想开 Web 就直接用 CLI 形式（见要点）。要把它暴露到宿主，两种方式：
+DeepSeek Harness（命令 `dsh`）既有终端 CLI，也自带 Web UI。**默认安全姿势**：`dsh web` 只绑 `127.0.0.1`（官方安全默认——Web API 可执行 bash，属 RCE 级接口），仅容器内可达；不想开 Web 就直接用 CLI 形式（见要点）。要把它暴露到宿主，两种方式：
 
 **方式一：`--port` 端口映射（✅ 推荐：保持 bridge 隔离，暴露面只有你映射的那个端口）**
 
@@ -295,7 +295,7 @@ mkdir -p ~/.dsh && cat > ~/.dsh/cordis.patch.yml <<'EOF'
     port: 3080
 EOF
 # 之后每次：
-dkagent --port 3080:3080 deepseek web
+dkagent --port 3080:3080 dsh web
 # 浏览器打开 http://localhost:3080 即可使用（Docker 桌面版 / 局域网机器同理）
 ```
 
@@ -304,7 +304,7 @@ dkagent --port 3080:3080 deepseek web
 **方式二：`--net host` 共享宿主网络（⚠️ 最后手段：无网络隔离）**
 
 ```bash
-dkagent --net host deepseek web
+dkagent --net host dsh web
 # 浏览器打开 http://localhost:3080（无需 --port；此模式下 docker 忽略端口映射）
 ```
 
@@ -313,7 +313,7 @@ dkagent --net host deepseek web
 **最安全档：完全断网跑 CLI（`--net off`）**
 
 ```bash
-dkagent --net off deepseek --profile headless "跑一下测试"
+dkagent --net off dsh --profile headless "跑一下测试"
 ```
 
 `--network none` 下容器无任何网络接口——外网、宿主端口（包括 Docker Desktop 的 `host.docker.internal` 回环通道）全部不可达，只靠挂载目录干活。不开 Web、不联网的任务建议都用这档。
@@ -323,7 +323,7 @@ dkagent --net off deepseek --profile headless "跑一下测试"
 要点：
 - **API Key**：启动后浏览器里 Settings → Models 填入（存 `~/.dsh/.credentials.yaml`，随 Home 卷持久化），或直接写进 `~/.config/dkagent/.env`（`DEEPSEEK_API_KEY=sk-...`，dkagent 自动注入容器）
 - **换端口**：改 `~/.dsh/cordis.patch.yml` 里的 `port`，与 `--port` 映射（方式一）一起改
-- **CLI 形式**：`dkagent deepseek --profile headless "跑一下测试"`（一次性任务，完全不暴露端口）；交互 TUI 用 `dsh --profile tui`
+- **CLI 形式**：`dkagent dsh --profile headless "跑一下测试"`（一次性任务，完全不暴露端口）；交互 TUI 用 `dsh --profile tui`
 - 加 `-e`（用完即焚）跑 Web UI 也完全没问题，关掉容器不留任何状态（临时 Home 不保留 patch，需每次重建）
 
 ---

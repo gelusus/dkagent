@@ -4,7 +4,7 @@
 
 > One bash command turns any directory into an isolated AI Agent runtime.
 
-A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Claude Code, Antigravity (successor to Gemini CLI), Codex, Pi, OpenCode, and DeepSeek Harness pre-installed. Supports **per-directory read-only mounts**, **multiple image profiles**, tmux auto-reconnect and multi-machine handoff sync, and uses 🟢🟡🔴 colors so you can see at a glance how much power you've handed the Agent each run.
+A Docker-based sandbox for AI Agent CLIs. Launch a container in one line with Claude Code, Antigravity (`agy`), Codex, Pi, OpenCode, and DeepSeek Harness (`dsh`) pre-installed. Supports **per-directory read-only mounts**, **multiple image profiles**, tmux auto-reconnect and multi-machine handoff sync, and uses 🟢🟡🔴 colors so you can see at a glance how much power you've handed the Agent each run.
 
 ---
 
@@ -17,7 +17,7 @@ dkagent -m ./original -r -m ./workspace/my-copy claude
 ```
 Read-only dirs are pinned at the kernel level via Docker bind mounts — the "reference project A, edit project B" scenario works in one line.
 
-**2. Unified entry point for multiple Agents**: Claude / Antigravity / Codex / Pi / OpenCode / DeepSeek Harness are all bundled into one image. The persistent Home volume keeps every Agent's login credentials and configs — seamless switching.
+**2. Unified entry point for multiple Agents**: Claude / Antigravity (`agy`) / Codex / Pi / OpenCode / DeepSeek Harness (`dsh`) are all bundled into one image. The persistent Home volume keeps every Agent's login credentials and configs — seamless switching.
 
 **3. Kali toolchain out of the box**: the default image is based on Kali Linux (nmap, ripgrep, Playwright, full toolkit). Need lighter? Switch to the `slim` profile (Debian slim, roughly two-thirds smaller).
 
@@ -246,16 +246,16 @@ dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # pass through rsyn
 ## Command-line reference
 
 ```bash
-dkagent [options] [agent] [extra args...]    # agent: claude/antigravity/pi/codex/opencode/deepseek; empty → interactive zsh
+dkagent [options] [agent] [extra args...]    # agent: claude/agy/pi/codex/opencode/dsh; empty → interactive zsh
 ```
 
 ```bash
 dkagent                                # interactive Kali shell (mounts cwd)
 dkagent claude                         # wake up Claude Code inside the container
-dkagent -m ./a -r -m ./b antigravity   # multi-dir mounts, a read-only, b writable
+dkagent -m ./a -r -m ./b agy            # multi-dir mounts, a read-only, b writable
 dkagent -p slim claude                 # switch profile
 dkagent --docker-socket claude         # docker inside the container (⚠️ equals host root)
-dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI via port mapping
+dkagent --port 3080:3080 dsh web        # 🌐 DeepSeek Harness Web UI via port mapping
 dkagent --dry-run                      # print the docker run command, don't execute
 ```
 
@@ -281,7 +281,7 @@ dkagent --dry-run                      # print the docker run command, don't exe
 
 ## Port-mapping in action: DeepSeek Harness Web UI
 
-DeepSeek Harness (`deepseek`, command `dsh`) has both a terminal CLI and a built-in Web UI. **The safe default**: `dsh web` binds `127.0.0.1` only (an official safety default — the Web API can execute bash, i.e. RCE-grade), reachable only inside the container; no Web needed? Use the CLI form (see key points). Two ways to expose it to the host:
+DeepSeek Harness (command `dsh`) has both a terminal CLI and a built-in Web UI. **The safe default**: `dsh web` binds `127.0.0.1` only (an official safety default — the Web API can execute bash, i.e. RCE-grade), reachable only inside the container; no Web needed? Use the CLI form (see key points). Two ways to expose it to the host:
 
 **Option 1: `--port` port mapping (✅ recommended: keeps bridge isolation; the only exposure is the port you publish)**
 
@@ -296,7 +296,7 @@ mkdir -p ~/.dsh && cat > ~/.dsh/cordis.patch.yml <<'EOF'
     port: 3080
 EOF
 # From then on:
-dkagent --port 3080:3080 deepseek web
+dkagent --port 3080:3080 dsh web
 # open http://localhost:3080 in your browser (same from Docker Desktop / LAN machines)
 ```
 
@@ -305,7 +305,7 @@ dkagent --port 3080:3080 deepseek web
 **Option 2: `--net host` (⚠️ last resort: no network isolation)**
 
 ```bash
-dkagent --net host deepseek web
+dkagent --net host dsh web
 # open http://localhost:3080 (no --port needed; docker ignores port mappings in this mode)
 ```
 
@@ -314,7 +314,7 @@ With `--network host` the container shares the host's network namespace (confirm
 **Safest tier: fully offline CLI (`--net off`)**
 
 ```bash
-dkagent --net off deepseek --profile headless "run the tests"
+dkagent --net off dsh --profile headless "run the tests"
 ```
 
 With `--network none` the container has no network interfaces at all — the internet and all host ports (including Docker Desktop's `host.docker.internal` loopback channel) are unreachable; it works purely through mounted directories. Use this tier for any task that needs no Web UI and no network.
@@ -324,7 +324,7 @@ With `--network none` the container has no network interfaces at all — the int
 Key points:
 - **API key**: after startup, enter it in the browser under Settings → Models (stored in `~/.dsh/.credentials.yaml`, persisted in the Home volume), or simply put `DEEPSEEK_API_KEY=sk-...` in `~/.config/dkagent/.env` (dkagent injects it into the container automatically)
 - **Change the port**: edit the `port` in `~/.dsh/cordis.patch.yml`, and update the `--port` mapping (Option 1) accordingly
-- **CLI form**: `dkagent deepseek --profile headless "run the tests"` (one-shot task, exposes no port at all); interactive TUI via `dsh --profile tui`
+- **CLI form**: `dkagent dsh --profile headless "run the tests"` (one-shot task, exposes no port at all); interactive TUI via `dsh --profile tui`
 - Adding `-e` (ephemeral) for the Web UI works fine too — close the container and no state remains (the ephemeral Home doesn't keep the patch; recreate it each time)
 
 ---

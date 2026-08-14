@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-dkagent — 基于 Docker 的 AI Agent CLI 统一运行入口。核心是一个 bash 脚本（约 1000 行），把 Docker 隔离能力编排成命令行：一行命令拉起容器，内置 Claude/Antigravity/Codex/Pi/OpenCode/DeepSeek Harness，支持逐目录挂载控制、多镜像 profile、tmux 断线重连、多机接力同步（`dkagent sync`）。
+dkagent — 基于 Docker 的 AI Agent CLI 统一运行入口。核心是一个 bash 脚本（约 1000 行），把 Docker 隔离能力编排成命令行：一行命令拉起容器，内置 Claude/Antigravity（`agy`）/Codex/Pi/OpenCode/DeepSeek Harness（`dsh`），支持逐目录挂载控制、多镜像 profile、tmux 断线重连、多机接力同步（`dkagent sync`）。
 
 ## 关键文件
 

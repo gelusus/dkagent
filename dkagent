@@ -286,11 +286,11 @@ Usage:
 
 Agents:
   claude        Start Claude Code
-  antigravity   Start Google Antigravity (agy, successor to Gemini CLI)
+  agy           Start Google Antigravity (successor to Gemini CLI)
   pi            Start Pi Coding Agent
   codex         Start OpenAI Codex
   opencode      Start OpenCode
-  deepseek      Start DeepSeek Harness (dsh; "deepseek web" for the Web UI)
+  dsh           Start DeepSeek Harness ("dsh web" for the Web UI)
   (empty)       Enter an interactive zsh shell
 
 Options:
@@ -356,8 +356,8 @@ Examples:
   dkagent --image my-custom-agent claude     # 🐳 use any custom image
   dkagent --docker-socket claude             # 🐋 docker usable inside (⚠️ highest risk)
   dkagent --port 8080:8080 claude            # 🔌 expose a container service to the host
-  dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI → http://localhost:3080
-  dkagent --net host deepseek web           # 🌐 share host network; loopback UI reachable at localhost:3080
+  dkagent --port 3080:3080 dsh web            # 🌐 DeepSeek Harness Web UI → http://localhost:3080
+  dkagent --net host dsh web                 # 🌐 share host network; loopback UI reachable at localhost:3080
   dkagent --net off claude                 # 🚫 run with no network at all (safest network tier)
   dkagent --tmux-name mywork claude          # 🔌 custom tmux session name
   dkagent --no-tmux claude                   # 🔌 disable tmux wrapping
@@ -371,11 +371,11 @@ dkagent - AI Agent Docker 统一运行入口
 
 Agent 名称:
   claude        启动 Claude Code
-  antigravity   启动 Google Antigravity（agy，Gemini CLI 继任者）
+  agy           启动 Google Antigravity（Gemini CLI 继任者）
   pi            启动 Pi Coding Agent
   codex         启动 OpenAI Codex
   opencode      启动 OpenCode
-  deepseek      启动 DeepSeek Harness（dsh；`deepseek web` 为 Web 模式）
+  dsh           启动 DeepSeek Harness（`dsh web` 为 Web 模式）
   (留空)         进入交互式 zsh shell
 
 选项:
@@ -439,8 +439,8 @@ Agent 名称:
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
   dkagent --docker-socket claude             # 🐋 容器内可用 docker（⚠️ 最高风险）
   dkagent --port 8080:8080 claude            # 🔌 将容器内服务端口映射到宿主机
-  dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI → http://localhost:3080
-  dkagent --net host deepseek web           # 🌐 共享宿主网络，loopback 服务直接在 localhost:3080 访问
+  dkagent --port 3080:3080 dsh web            # 🌐 DeepSeek Harness Web UI → http://localhost:3080
+  dkagent --net host dsh web                 # 🌐 共享宿主网络，loopback 服务直接在 localhost:3080 访问
   dkagent --net off claude                 # 🚫 完全断网运行（最安全的网络档）
   dkagent --tmux-name mywork claude          # 🔌 自定义 tmux 会话名
   dkagent --no-tmux claude                   # 🔌 禁用 tmux 包装
@@ -1554,19 +1554,12 @@ DOCKER_ARGS+=("$DOCKER_IMAGE")
 
 # 6. 指定要执行的命令
 if [[ -n "$AGENT_CMD" ]]; then
-    # agent 名 → 容器内实际命令映射：
-    #   Antigravity 的命令是 agy（gemini 保留为兼容旧习惯的别名，同样指向 agy）
-    #   DeepSeek Harness 的命令是 dsh
-    RUN_CMD="$AGENT_CMD"
-    case "$AGENT_CMD" in
-        antigravity|gemini) RUN_CMD="agy" ;;
-        deepseek)           RUN_CMD="dsh" ;;
-    esac
+    # agent 名即容器内命令名（claude/pi/codex/opencode/agy/dsh 等），不做别名映射
     # 用 -f 跳过全部 zsh 启动文件（.zshenv/.zprofile/.zshrc）：
     # 持久化 Home 卷可能被注入恶意启动文件，-lc（登录 shell）会无条件 source .zshenv，
     # 使后门在 --no-mount 等"看似隔离"的模式下仍然执行；交互 shell（无 agent 参数）
     # 仍读 .zshrc（用户配置场景，属已知权衡）
-    DOCKER_ARGS+=("/bin/zsh" "-f" "-c" "${RUN_CMD} ${EXTRA_ARGS[*]:-}")
+    DOCKER_ARGS+=("/bin/zsh" "-f" "-c" "${AGENT_CMD} ${EXTRA_ARGS[*]:-}")
 else
     DOCKER_ARGS+=("/bin/zsh")
 fi
