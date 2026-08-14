@@ -33,24 +33,24 @@ HOME_VOLUME="agent_docker_kali-home"
 SYNC_IMAGE="dkagent-sync"
 
 # .env 文件搜索路径
+# 注意：不再回退到"脚本所在目录"——若 repo 目录被种入 .env/profiles/peers（例如
+# agent-sandboxed 挂载 ./workspace 时被容器内进程写入），会影响后续所有运行（安全考量）
 ENV_SEARCH_PATHS=(
     "${DKAGENT_ENV:-}"                             # 1. 环境变量指定的路径
     "$HOME/.config/dkagent/.env"                  # 2. XDG 风格全局配置
-    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.env" # 3. 脚本所在目录 (如符号链接)
 )
 
 # profile 配置文件搜索路径（每行格式: PROFILE_NAME=image-name）
 PROFILE_CONF_PATHS=(
-    "$HOME/.config/dkagent/profiles"              # 1. XDG 风格全局配置
-    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/profiles" # 2. 脚本所在目录
+    "$HOME/.config/dkagent/profiles"              # XDG 风格全局配置（仅此处，不回退脚本目录）
 )
 
 # sync 子命令配置文件路径
 SYNC_PEERS_PATHS=(
-    "$HOME/.config/dkagent/peers"                 # 1. peers: alias=ssh://user@host:port
-    "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/peers-sync" # 2. 脚本所在目录（备用）
+    "$HOME/.config/dkagent/peers"                 # peers: alias=ssh://user@host:port（仅此处）
 )
 SYNC_MAPPING_PATH="$HOME/.config/dkagent/sync-mapping"  # 项目路径映射表（脚本自动管理 + 可 vi 编辑）
+SYNC_IMAGE_ID_FILE="$HOME/.config/dkagent/sync-image.id" # dkagent-sync 镜像指纹（防本地镜像被替换）
 
 # 加载自定义 profile（覆盖/追加到内置 PROFILE_IMAGES）
 load_custom_profiles() {
@@ -129,6 +129,18 @@ declare -A MSG_ZH=(
     [tmux_wrapping_renamed]="🔌 会话名 '%s' 已被占用，改用 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_no_tmux]="ℹ️  --no-tmux 已禁用宿主机 tmux 包装（SSH 断线进程会丢失）"
     [err_port_invalid]="❌ 错误: 无效的端口映射: %s（格式: [宿主IP:]宿主端口:容器端口[/tcp|/udp]，如 8080:8080 或 127.0.0.1:3000:3000）"
+    [err_net_mode_invalid]="❌ 错误: 无效的网络模式: %s（目前仅支持 --net host / --net off）"
+    [warn_net_host_risk]="⚠️ 风险提示: --net host 无网络隔离——容器与宿主共享同一网络命名空间，容器内端口即宿主端口、并可任意访问宿主机全部端口与服务。仅在你完全信任容器内程序时使用！"
+    [warn_net_host_port]="⚠️  提示: --net host 共享宿主网络，--port 端口映射会被 docker 忽略（容器内 127.0.0.1 即宿主 127.0.0.1，无需映射）"
+    [warn_net_off_port]="⚠️  提示: --net off 容器完全断网（无网络接口），--port 端口映射无效"
+    [dry_run_env_masked]="🔒 环境变量经临时 --env-file 传递（0600、用后即删，宿主 ps 不可见），dry-run 已打码。设置 DKAGENT_DRY_RUN_SHOW_SECRETS=1 显示明文:"
+    [dry_run_env_plain]="🔓 环境变量明文（DKAGENT_DRY_RUN_SHOW_SECRETS=1）:"
+    [err_sync_bad_ident]="❌ 错误: peer URL 的用户名/主机含非法字符: %s（仅允许字母数字与 . _ -）"
+    [err_sync_bad_path]="❌ 错误: 远端路径含非法字符（仅允许字母数字与 / . ~ _ -，不支持空格）: %s"
+    [warn_sync_peers_perm]="⚠️  警告: peers 文件 %s 权限为 %s（含 SSH 地址，建议 chmod 600）"
+    [sync_image_pinned]="🔒 已记录同步镜像指纹 %s...（镜像被替换时将拒绝同步）"
+    [err_sync_image_changed]="❌ 错误: dkagent-sync 镜像与首次记录的指纹不一致，可能被替换！为保护 SSH 凭据，已拒绝同步。"
+    [err_sync_image_changed_hint]="提示: 若确为你本人重建镜像（如升级基础镜像），删除 %s 后重试。"
     [port_publish]="🔌 端口映射: %s"
     # ── sync 子命令（纯手动，绝不与 docker run/tmux 耦合）──
     [sync_unknown_action]="❌ 错误: 未知的 sync 子命令: %s"
@@ -201,6 +213,18 @@ declare -A MSG_EN=(
     [tmux_wrapping_renamed]="🔌 Session name '%s' taken, using '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_no_tmux]="ℹ️  --no-tmux: host tmux wrapping disabled (SSH disconnect loses the process)"
     [err_port_invalid]="❌ Error: Invalid port mapping: %s (format: [HOST_IP:]HOST_PORT:CONTAINER_PORT[/tcp|/udp], e.g. 8080:8080 or 127.0.0.1:3000:3000)"
+    [err_net_mode_invalid]="❌ Error: Invalid network mode: %s (currently only --net host / --net off are supported)"
+    [warn_net_host_risk]="⚠️ Risk: --net host has NO network isolation — the container shares the host network namespace; its ports are host ports and it can reach ALL host ports and services. Use only when you fully trust what runs inside!"
+    [warn_net_host_port]="⚠️  Note: --net host shares the host network; --port mappings are ignored by docker (container 127.0.0.1 == host 127.0.0.1, no mapping needed)"
+    [warn_net_off_port]="⚠️  Note: --net off gives the container no network at all; --port mappings have no effect"
+    [dry_run_env_masked]="🔒 Env vars are passed via a temporary --env-file (0600, deleted after use; invisible to host ps) and masked in dry-run. Set DKAGENT_DRY_RUN_SHOW_SECRETS=1 to reveal:"
+    [dry_run_env_plain]="🔓 Env vars in plain text (DKAGENT_DRY_RUN_SHOW_SECRETS=1):"
+    [err_sync_bad_ident]="❌ Error: peer URL user/host contains illegal characters: %s (only alphanumerics and . _ - are allowed)"
+    [err_sync_bad_path]="❌ Error: remote path contains illegal characters (only alphanumerics and / . ~ _ -; spaces unsupported): %s"
+    [warn_sync_peers_perm]="⚠️  Warning: peers file %s has mode %s (it contains SSH URLs; chmod 600 recommended)"
+    [sync_image_pinned]="🔒 Sync image fingerprint recorded: %s... (sync is refused if the image is ever replaced)"
+    [err_sync_image_changed]="❌ Error: the dkagent-sync image fingerprint differs from the first recorded one — it may have been replaced! Sync refused to protect your SSH credentials."
+    [err_sync_image_changed_hint]="Hint: if you rebuilt the image yourself (e.g. base image upgrade), delete %s and retry."
     [port_publish]="🔌 Port mapping: %s"
     # ── sync subcommand (purely manual, never coupled with docker run/tmux) ──
     [sync_unknown_action]="❌ Error: Unknown sync subcommand: %s"
@@ -262,10 +286,11 @@ Usage:
 
 Agents:
   claude        Start Claude Code
-  gemini        Start Gemini CLI
+  antigravity   Start Google Antigravity (agy, successor to Gemini CLI)
   pi            Start Pi Coding Agent
   codex         Start OpenAI Codex
   opencode      Start OpenCode
+  deepseek      Start DeepSeek Harness (dsh; "deepseek web" for the Web UI)
   (empty)       Enter an interactive zsh shell
 
 Options:
@@ -283,6 +308,18 @@ Options:
                          ⚠️ Highest risk: equivalent to handing host root to the container
   --port HOST:CONTAINER  🔌 Publish a container port to the host (docker -p semantics)
                          Repeatable, e.g. 8080:8080, 127.0.0.1:3000:3000, 9000:9000/udp
+  --net MODE            🌐 Network mode (default: bridge)
+                         off:  no network at all (--network none) — the container has
+                         no network interfaces, cannot reach the internet or host ports
+                         (safest tier; also blocks Docker Desktop's host.docker.internal)
+                         ⚠️ Security: host mode has NO network isolation — container
+                         can reach ALL host ports/services (risk warning printed at startup)
+                         host: share the host network (--network host) — container
+                         127.0.0.1 == host 127.0.0.1, so loopback-only services are
+                         reachable without port mapping; --port is ignored in this mode
+                         Note: on Docker Desktop (WSL2/macOS) host mode attaches to the
+                         Docker VM's namespace, so localhost is NOT your terminal's
+                         localhost (verified on WSL2) — use --port there instead
   --no-tmux              🔌 Disable host tmux wrapping (SSH disconnect loses the process)
   --tmux-name NAME       🔌 Custom tmux session name (default: dkagent-<cwd basename>)
                          Duplicate names get a _2, _3... suffix; reconnect with tmux attach
@@ -304,6 +341,9 @@ Risk levels (⚠ choose carefully):
   🔴 High risk    : has writable     (can act on mounts + persistent home can plant backdoors)
   ☠️ Escape level : --docker-socket  (docker.sock = host root, overrides all tiers above)
 
+  Network modes (separate axis): --net off (🟢 no network at all, safest) /
+  default bridge (publish only what --port maps) / --net host (🔴 no isolation)
+
 Examples:
   dkagent                                    # mount cwd to workspace/<basename>
   dkagent claude                             # mount cwd and launch Claude
@@ -316,6 +356,9 @@ Examples:
   dkagent --image my-custom-agent claude     # 🐳 use any custom image
   dkagent --docker-socket claude             # 🐋 docker usable inside (⚠️ highest risk)
   dkagent --port 8080:8080 claude            # 🔌 expose a container service to the host
+  dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI → http://localhost:3080
+  dkagent --net host deepseek web           # 🌐 share host network; loopback UI reachable at localhost:3080
+  dkagent --net off claude                 # 🚫 run with no network at all (safest network tier)
   dkagent --tmux-name mywork claude          # 🔌 custom tmux session name
   dkagent --no-tmux claude                   # 🔌 disable tmux wrapping
 EOF
@@ -328,10 +371,11 @@ dkagent - AI Agent Docker 统一运行入口
 
 Agent 名称:
   claude        启动 Claude Code
-  gemini        启动 Gemini CLI
+  antigravity   启动 Google Antigravity（agy，Gemini CLI 继任者）
   pi            启动 Pi Coding Agent
   codex         启动 OpenAI Codex
   opencode      启动 OpenCode
+  deepseek      启动 DeepSeek Harness（dsh；`deepseek web` 为 Web 模式）
   (留空)         进入交互式 zsh shell
 
 选项:
@@ -349,6 +393,16 @@ Agent 名称:
                          ⚠️ 最高风险：等同把宿主机 root 权限交给容器
   --port HOST:CONTAINER  🔌 端口映射（等价 docker run -p，可重复指定）
                          如 8080:8080、127.0.0.1:3000:3000、9000:9000/udp
+  --net MODE            🌐 网络模式（默认 bridge）
+                         off:  完全断网（--network none），容器无任何网络接口，
+                               无法访问外网与宿主端口（最安全档；可阻断 Docker Desktop
+                               的 host.docker.internal 宿主回环通道）
+                         ⚠️ 安全风险: host 模式无网络隔离——容器可访问宿主全部端口与服务
+                         （启动时会打印风险提示）
+                         host: 共享宿主网络（--network host），容器内 127.0.0.1 即宿主
+                         127.0.0.1，只绑 loopback 的服务无需端口映射直接可达；此模式 --port 被忽略
+                         注意: Docker Desktop（WSL2/macOS）下 host 模式挂到 Docker 虚拟机
+                         的命名空间，localhost 并非你终端的 localhost（WSL2 实测）——请用 --port
   --no-tmux              🔌 禁用宿主机 tmux 包装（SSH 断线进程会丢失）
   --tmux-name NAME       🔌 自定义 tmux 会话名（默认: dkagent-<当前目录名>）
                          重名时自动加 _2、_3... 后缀；重连用 tmux attach
@@ -370,6 +424,9 @@ Agent 名称:
   🔴 高风险    : 有可写挂载       (可操作挂载目录 + 持久化 home 可留后门)
   ☠️ 逃逸级别  : --docker-socket  (docker.sock = 宿主 root，无视上述档位)
 
+  网络模式（独立维度）: --net off（🟢 完全断网，最安全）/
+  默认 bridge（仅暴露 --port 映射的端口）/ --net host（🔴 无隔离）
+
 示例:
   dkagent                                    # 挂载当前目录到 workspace/<basename>
   dkagent claude                             # 挂载当前目录，直接启动 Claude
@@ -382,6 +439,9 @@ Agent 名称:
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
   dkagent --docker-socket claude             # 🐋 容器内可用 docker（⚠️ 最高风险）
   dkagent --port 8080:8080 claude            # 🔌 将容器内服务端口映射到宿主机
+  dkagent --port 3080:3080 deepseek web      # 🌐 DeepSeek Harness Web UI → http://localhost:3080
+  dkagent --net host deepseek web           # 🌐 共享宿主网络，loopback 服务直接在 localhost:3080 访问
+  dkagent --net off claude                 # 🚫 完全断网运行（最安全的网络档）
   dkagent --tmux-name mywork claude          # 🔌 自定义 tmux 会话名
   dkagent --no-tmux claude                   # 🔌 禁用 tmux 包装
 EOF
@@ -475,27 +535,35 @@ find_env_file() {
     return 1
 }
 
-# 全局环境变量参数数组，避免 Word Splitting Bug
-ENV_DOCKER_ARGS=()
+# 环境变量收集（KEY=value 行）。
+# 安全传递方式：写入临时 --env-file（0600、运行结束即删）传给 docker，避免
+# -e KEY=val 形式出现在宿主进程列表（ps）与命令行回显中；同 Key 后写入的覆盖先写入的。
+ENV_FILE_LINES=()
+ENV_FILE_TEMP=""
 
 build_env_args() {
-    local env_file="$1"
+    local env_file="$1" line
+    local -A collected=()
     if [[ -f "$env_file" ]]; then
         while IFS= read -r line || [[ -n "$line" ]]; do
             # 跳过空行和以 # 开头的注释行
             [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
             # 去掉行首空白字符
             line="${line#"${line%%[![:space:]]*}"}"
-            ENV_DOCKER_ARGS+=("-e" "$line")
+            # --env-file 仅支持 KEY=value 行（不含 = 的行跳过）
+            [[ "$line" == *=* ]] || continue
+            collected["${line%%=*}"]="$line"
         done < "$env_file"
     fi
 
-    # 允许宿主机环境变量覆盖 .env 里的 Key，直接透传进去
-    for var in ANTHROPIC_API_KEY GEMINI_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY; do
+    # 允许宿主机环境变量覆盖 .env 里的 Key，直接透传进去（后写入 = 覆盖 .env 同名项）
+    local var
+    for var in ANTHROPIC_API_KEY GEMINI_API_KEY OPENAI_API_KEY OPENROUTER_API_KEY DEEPSEEK_API_KEY; do
         if [[ -n "${!var:-}" ]]; then
-            ENV_DOCKER_ARGS+=("-e" "${var}=${!var}")
+            collected["$var"]="${var}=${!var}"
         fi
     done
+    ENV_FILE_LINES=("${collected[@]}")
 }
 
 # 校验 --port 参数格式（防手误；参数走 DOCKER_ARGS 数组传参无 shell 注入风险，
@@ -534,9 +602,14 @@ declare -A SYNC_PEERS=()
 # 加载 peers 配置（仿 load_custom_profiles 模式）
 load_sync_peers() {
     SYNC_PEERS=()
-    local path name url line
+    local path name url line perm
     for path in "${SYNC_PEERS_PATHS[@]}"; do
         [[ -z "$path" || ! -f "$path" ]] && continue
+        # 权限告警：peers 含 SSH 地址，组/其他可读时提示收紧（不阻断）
+        perm="$(stat -c '%a' "$path" 2>/dev/null || true)"
+        if [[ -n "$perm" && "$perm" != "600" && "$perm" != "400" && "$perm" != "700" ]]; then
+            msg warn_sync_peers_perm "$path" "$perm" >&2
+        fi
         while IFS= read -r line || [[ -n "$line" ]]; do
             [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
             line="${line#"${line%%[![:space:]]*}"}"
@@ -569,9 +642,24 @@ parse_ssh_url() {
         msg err_sync_invalid_port "$port" >&2
         exit 1
     fi
+    # 安全校验：user/host 字符白名单（会被拼进 user@host 经 ssh/rsync 远端 shell 解析，
+    # 空格与元字符即注入面，只放行字母数字与 . _ -）
+    if [[ ! "$user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        msg err_sync_bad_ident "$user" >&2
+        exit 1
+    fi
+    if [[ ! "$host" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        msg err_sync_bad_ident "$host" >&2
+        exit 1
+    fi
     SYNC_USER="$user"
     SYNC_HOST="$host"
     SYNC_PORT="$port"
+}
+
+# 校验远端路径（rsync 的 user@host:path 会交给远端 shell 解析，空格/元字符是注入面，白名单拒绝）
+validate_sync_remote_path() {
+    [[ -n "$1" && "$1" =~ ^[A-Za-z0-9/._~-]+$ ]]
 }
 
 # 查找当前目录到 peer 的映射，输出 remote-path，找不到返回 1
@@ -604,13 +692,29 @@ HEADER
         '$1 != lp || $2 != p' "$SYNC_MAPPING_PATH" > "$tmp" 2>/dev/null || true
     printf '%s\t%s\t%s\n' "$local_path" "$peer" "$remote_path" >> "$tmp"
     mv "$tmp" "$SYNC_MAPPING_PATH"
+    chmod 600 "$SYNC_MAPPING_PATH"
 }
 
-# 检查 dkagent-sync 镜像是否存在（持久化卷同步必需）
+# 检查 dkagent-sync 镜像是否存在 + 指纹校验（持久化卷同步必需）
+# 指纹（镜像 ID）首次使用时记录；此后每次校验一致才放行。
+# 防御场景：攻击者拿到 docker 访问权（如经 --docker-socket）用恶意 Dockerfile 重建同名
+# 镜像——下次 sync 时容器内代码即可窃取挂载进去的 SSH 身份文件。
 check_sync_image() {
     if ! docker image inspect "$SYNC_IMAGE" &>/dev/null; then
         msg sync_no_image "$SYNC_IMAGE" >&2
         msg sync_image_build_hint "$SYNC_IMAGE" >&2
+        return 1
+    fi
+    local cur_id saved_id
+    cur_id="$(docker image inspect "$SYNC_IMAGE" --format '{{.Id}}' 2>/dev/null)" || return 1
+    if [[ ! -f "$SYNC_IMAGE_ID_FILE" ]]; then
+        mkdir -p "$(dirname "$SYNC_IMAGE_ID_FILE")"
+        printf '%s\n' "$cur_id" > "$SYNC_IMAGE_ID_FILE"
+        chmod 600 "$SYNC_IMAGE_ID_FILE"
+        msg sync_image_pinned "${cur_id:0:19}"
+    elif ! saved_id="$(cat "$SYNC_IMAGE_ID_FILE" 2>/dev/null)" || [[ "$saved_id" != "$cur_id" ]]; then
+        msg err_sync_image_changed >&2
+        msg err_sync_image_changed_hint "$SYNC_IMAGE_ID_FILE" >&2
         return 1
     fi
     return 0
@@ -644,17 +748,38 @@ sync_volume() {
         dst="/data/"
     fi
 
+    # SSH 凭据最小化挂载（不再整目录挂 ~/.ssh，缩小镜像被替换时的凭据暴露面）：
+    #   - 有 agent（SSH_AUTH_SOCK）时只挂 agent socket，私钥文件不进容器
+    #   - 无 agent 时经 ssh -G 解析本机 ssh 实际会用的身份文件，只挂这些私钥（:ro）
+    #   - known_hosts 始终只读挂载（accept-new 写不进去仅告警，不影响连接）
+    local ssh_mount_args=() id_opts="" idfile idbase
+    if [[ -n "${SSH_AUTH_SOCK:-}" ]]; then
+        ssh_mount_args+=(-v "${SSH_AUTH_SOCK}:${SSH_AUTH_SOCK}" -e "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}")
+    else
+        while IFS= read -r idfile; do
+            # ssh -G 输出的路径可能带未展开的 ~，替换为绝对路径再检查/挂载
+            idfile="${idfile/#\~/$HOME}"
+            [[ -f "$idfile" ]] || continue
+            idbase="$(basename "$idfile")"
+            ssh_mount_args+=(-v "${idfile}:/root/.ssh/${idbase}:ro")
+            id_opts+=" -o IdentityFile=/root/.ssh/${idbase}"
+        done < <(ssh -G -p "$port" "${user}@${host}" 2>/dev/null \
+                 | awk 'tolower($1)=="identityfile"{ $1=""; sub(/^[ \t]+/,""); print }' | sort -u)
+    fi
+    if [[ -f "$HOME/.ssh/known_hosts" ]]; then
+        ssh_mount_args+=(-v "${HOME/.ssh/known_hosts}:/root/.ssh/known_hosts:ro")
+    fi
+
     local attempt
     for attempt in $(seq 1 "$retries"); do
         [[ "$dry" == false ]] && msg sync_attempt "$attempt" "$retries"
         if docker run --rm -i \
             -v "$local_mount" \
-            -v "$HOME/.ssh:/root/.ssh:ro" \
-            ${SSH_AUTH_SOCK:+-v "$SSH_AUTH_SOCK:$SSH_AUTH_SOCK" -e SSH_AUTH_SOCK} \
+            ${ssh_mount_args[@]+"${ssh_mount_args[@]}"} \
             "$SYNC_IMAGE" \
             "${base_args[@]}" \
             "${extra_args[@]}" \
-            -e "ssh $ssh_opts" \
+            -e "ssh $ssh_opts${id_opts}" \
             --rsync-path="$remote_rsync_path" \
             "$src" "$dst"; then
             [[ "$dry" == false ]] && msg sync_attempt_success "$attempt"
@@ -816,13 +941,21 @@ dkagent_sync_xfer() {
     if [[ "$skip_project" == false ]]; then
         if [[ -n "$remote_path_opt" ]]; then
             remote_dir="$remote_path_opt"
-            save_sync_mapping "$local_dir" "$peer_alias" "$remote_dir"
-            msg sync_remote_path_added "$local_dir" "$peer_alias" "$remote_dir"
         elif remote_dir="$(find_sync_mapping "$peer_alias")"; then
             : # 找到映射，直接用
         else
             msg sync_no_mapping_skip >&2
             skip_project=true
+        fi
+        # 安全校验：远端路径字符白名单（--remote-path 与映射表文件统一把关，
+        # 经 rsync 远端 shell 传递，拒绝空格与元字符；必须在 save_sync_mapping 之前）
+        if [[ "$skip_project" == false ]] && ! validate_sync_remote_path "$remote_dir"; then
+            msg err_sync_bad_path "$remote_dir" >&2
+            exit 1
+        fi
+        if [[ -n "$remote_path_opt" ]]; then
+            save_sync_mapping "$local_dir" "$peer_alias" "$remote_dir"
+            msg sync_remote_path_added "$local_dir" "$peer_alias" "$remote_dir"
         fi
     fi
 
@@ -929,6 +1062,7 @@ EXTRA_ARGS=()
 CUSTOM_IMAGE=""     # --image 指定的镜像名（最高优先级）
 SELECTED_PROFILE="" # --profile 指定的 profile 名
 ENABLE_DOCKER=false # --docker-socket: 挂载宿主 docker.sock，让容器内可运行 docker 命令
+NET_MODE=""        # --net: 网络模式（空 = 默认 bridge；host = --network host 共享宿主网络）
 # tmux 包装（默认开启：SSH 断线后进程保留，手动 tmux attach 重连）；保存原始 argv 供内层重入使用
 ORIGINAL_ARGV=("$@")
 ENABLE_TMUX=true    # 默认开启宿主机 tmux 包装（--no-tmux 关闭）
@@ -1026,6 +1160,21 @@ while [[ $# -gt 0 ]]; do
                 exit 1
             fi
             PORT_MAPS+=("$2")
+            shift 2
+            ;;
+        --net)
+            if [[ $# -lt 2 ]]; then
+                msg err_opt_needs_arg "--net" >&2
+                exit 1
+            fi
+            case "$2" in
+                host) NET_MODE="host" ;;
+                off)  NET_MODE="off" ;;
+                *)
+                    msg err_net_mode_invalid "$2" >&2
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --no-tmux)
@@ -1325,6 +1474,25 @@ for mapping in "${PORT_MAPS[@]}"; do
     msg port_publish "$mapping"
 done
 
+# 2.9 网络模式（--net host = --network host：共享宿主网络命名空间，
+#     容器内 127.0.0.1 即宿主 127.0.0.1，只绑 loopback 的服务（如 dsh web 默认）
+#     无需端口映射即可直接访问；此时 --port 会被 docker 忽略）
+#     与 --docker-socket 同理：无网络隔离属高风险操作，启动前必须打印风险提示
+#     --net off = --network none：容器无任何网络接口，外网/宿主端口全不可达（最安全档，
+#     实测可阻断 Docker Desktop 的 host.docker.internal 宿主回环通道）
+if [[ "$NET_MODE" == "host" ]]; then
+    msg warn_net_host_risk
+    DOCKER_ARGS+=("--network" "host")
+    if [[ ${#PORT_MAPS[@]} -gt 0 ]]; then
+        msg warn_net_host_port
+    fi
+elif [[ "$NET_MODE" == "off" ]]; then
+    DOCKER_ARGS+=("--network" "none")
+    if [[ ${#PORT_MAPS[@]} -gt 0 ]]; then
+        msg warn_net_off_port
+    fi
+fi
+
 # 3. 打印安全风险信息
 HAS_WRITABLE=false
 HAS_READONLY=false
@@ -1369,9 +1537,16 @@ if [[ "$ENABLE_DOCKER" == true ]]; then
     msg risk_docker_escape
 fi
 
-# 4. 塞入环境变量参数
-if [[ ${#ENV_DOCKER_ARGS[@]} -gt 0 ]]; then
-    DOCKER_ARGS+=("${ENV_DOCKER_ARGS[@]}")
+# 4. 环境变量经临时 --env-file 传递（0600、用后即删；避免 -e KEY=val 出现在宿主 ps 与 dry-run 回显）
+if [[ ${#ENV_FILE_LINES[@]} -gt 0 ]]; then
+    ENV_FILE_TEMP="$(mktemp /tmp/dkagent-env.XXXXXX)"
+    chmod 600 "$ENV_FILE_TEMP"
+    printf '%s\n' "${ENV_FILE_LINES[@]}" > "$ENV_FILE_TEMP"
+    # 信号/退出时清理临时凭据文件（见下方执行段：不再用 exec 替换进程，保证 trap 可运行）
+    trap 'rm -f "$ENV_FILE_TEMP"' EXIT
+    trap 'rm -f "$ENV_FILE_TEMP"; exit 130' INT
+    trap 'rm -f "$ENV_FILE_TEMP"; exit 143' TERM
+    DOCKER_ARGS+=("--env-file" "$ENV_FILE_TEMP")
 fi
 
 # 5. 指定镜像名称
@@ -1379,15 +1554,19 @@ DOCKER_ARGS+=("$DOCKER_IMAGE")
 
 # 6. 指定要执行的命令
 if [[ -n "$AGENT_CMD" ]]; then
+    # agent 名 → 容器内实际命令映射：
+    #   Antigravity 的命令是 agy（gemini 保留为兼容旧习惯的别名，同样指向 agy）
+    #   DeepSeek Harness 的命令是 dsh
+    RUN_CMD="$AGENT_CMD"
     case "$AGENT_CMD" in
-        claude|gemini|pi|codex|opencode)
-            DOCKER_ARGS+=("/bin/zsh" "-lc" "${AGENT_CMD} ${EXTRA_ARGS[*]:-}")
-            ;;
-        *)
-            # 允许运行任意指令
-            DOCKER_ARGS+=("/bin/zsh" "-lc" "${AGENT_CMD} ${EXTRA_ARGS[*]:-}")
-            ;;
+        antigravity|gemini) RUN_CMD="agy" ;;
+        deepseek)           RUN_CMD="dsh" ;;
     esac
+    # 用 -f 跳过全部 zsh 启动文件（.zshenv/.zprofile/.zshrc）：
+    # 持久化 Home 卷可能被注入恶意启动文件，-lc（登录 shell）会无条件 source .zshenv，
+    # 使后门在 --no-mount 等"看似隔离"的模式下仍然执行；交互 shell（无 agent 参数）
+    # 仍读 .zshrc（用户配置场景，属已知权衡）
+    DOCKER_ARGS+=("/bin/zsh" "-f" "-c" "${RUN_CMD} ${EXTRA_ARGS[*]:-}")
 else
     DOCKER_ARGS+=("/bin/zsh")
 fi
@@ -1398,8 +1577,21 @@ if [[ "$DRY_RUN" == true ]]; then
     msg dry_run_header
     printf '%q ' "${DOCKER_ARGS[@]}"
     echo -e "\n"
+    # 环境变量单独列出：默认打码（值不出现在终端/日志），opt-in 才显明文
+    if [[ ${#ENV_FILE_LINES[@]} -gt 0 ]]; then
+        if [[ "${DKAGENT_DRY_RUN_SHOW_SECRETS:-}" == "1" ]]; then
+            msg dry_run_env_plain
+            printf '  %s\n' "${ENV_FILE_LINES[@]}"
+        else
+            msg dry_run_env_masked
+            printf '  %s=***\n' "${ENV_FILE_LINES[@]%%=*}"
+        fi
+        echo ""
+    fi
     exit 0
 fi
 
 msg starting
-exec "${DOCKER_ARGS[@]}"
+# 不用 exec 替换进程：docker 作为子进程运行，结束后走 EXIT trap 清理 --env-file 临时文件
+"${DOCKER_ARGS[@]}"
+exit $?
