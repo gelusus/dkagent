@@ -356,8 +356,8 @@ Examples:
   dkagent --image my-custom-agent claude     # 🐳 use any custom image
   dkagent --docker-socket claude             # 🐋 docker usable inside (⚠️ highest risk)
   dkagent --port 8080:8080 claude            # 🔌 expose a container service to the host
-  dkagent --port 3080:3080 dsh web            # 🌐 DeepSeek Harness Web UI → http://localhost:3080
-  dkagent --net host dsh web                 # 🌐 share host network; loopback UI reachable at localhost:3080
+  dkagent --port 3080:3080 dsh web            # 🌐 dsh Web UI → http://localhost:3080 (one-time ~/.dsh/cordis.patch.yml binding 0.0.0.0 needed, see README)
+  dkagent --net host dsh web                 # 🌐 dsh Web UI loopback access — native Linux only; unreachable on Docker Desktop (WSL2/macOS), use --port
   dkagent --net off claude                 # 🚫 run with no network at all (safest network tier)
   dkagent --tmux-name mywork claude          # 🔌 custom tmux session name
   dkagent --no-tmux claude                   # 🔌 disable tmux wrapping
@@ -439,8 +439,8 @@ Agent 名称:
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
   dkagent --docker-socket claude             # 🐋 容器内可用 docker（⚠️ 最高风险）
   dkagent --port 8080:8080 claude            # 🔌 将容器内服务端口映射到宿主机
-  dkagent --port 3080:3080 dsh web            # 🌐 DeepSeek Harness Web UI → http://localhost:3080
-  dkagent --net host dsh web                 # 🌐 共享宿主网络，loopback 服务直接在 localhost:3080 访问
+  dkagent --port 3080:3080 dsh web            # 🌐 dsh Web UI → http://localhost:3080（首次需建 ~/.dsh/cordis.patch.yml 绑 0.0.0.0，见 README）
+  dkagent --net host dsh web                 # 🌐 dsh Web UI loopback 直达——仅原生 Linux；Docker Desktop（WSL2/macOS）下不可达，请用 --port
   dkagent --net off claude                 # 🚫 完全断网运行（最安全的网络档）
   dkagent --tmux-name mywork claude          # 🔌 自定义 tmux 会话名
   dkagent --no-tmux claude                   # 🔌 禁用 tmux 包装

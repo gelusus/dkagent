@@ -255,7 +255,7 @@ dkagent claude                         # wake up Claude Code inside the containe
 dkagent -m ./a -r -m ./b agy            # multi-dir mounts, a read-only, b writable
 dkagent -p slim claude                 # switch profile
 dkagent --docker-socket claude         # docker inside the container (⚠️ equals host root)
-dkagent --port 3080:3080 dsh web        # 🌐 DeepSeek Harness Web UI via port mapping
+dkagent --port 3080:3080 dsh web        # 🌐 dsh Web UI via port mapping (one-time cordis patch binding 0.0.0.0 needed first, see "Port-mapping in action" below)
 dkagent --dry-run                      # print the docker run command, don't execute
 ```
 

@@ -255,7 +255,7 @@ dkagent claude                         # 唤醒容器内 Claude Code
 dkagent -m ./a -r -m ./b agy            # 多目录挂载，a 只读 b 可写
 dkagent -p slim claude                 # 切换 profile
 dkagent --docker-socket claude         # 容器内可用 docker（⚠️ 等同宿主 root）
-dkagent --port 3080:3080 dsh web        # 🌐 DeepSeek Harness Web UI 端口映射
+dkagent --port 3080:3080 dsh web        # 🌐 dsh Web UI 端口映射（首次需先建 cordis patch 绑 0.0.0.0，见下文「端口映射实战」）
 dkagent --dry-run                      # 只打印 docker run 命令不执行
 ```
 
