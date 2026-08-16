@@ -49,9 +49,18 @@ dkagent sync --help      # sync 子命令帮助
 - **`--net` 仅 host/off 两档**：host 与 `--docker-socket` 同级（高风险，组装 docker run 时**必须**打印 `msg warn_net_host_risk`，不能只写文档）；off = `--network none` 完全断网（最安全档）；两档下 `--port` 均无效，需打印对应提示
 - **agent 命令用 `zsh -f -c`**（跳过全部用户/全局启动文件，防持久化 Home 卷 `.zshenv` 后门在 `--no-mount` 等模式下执行）；交互 shell（无 agent 参数）仍读 `.zshrc`，属已知权衡
 - **sync 镜像重建需重新信任**：升级 `dkagent-sync` 后指纹不匹配会拒绝同步，需删 `~/.config/dkagent/sync-image.id`（README 已写）；sync_volume 的身份文件解析依赖 `ssh -G`（openssh ≥ 7.3）
-- **dsh web 默认绑 127.0.0.1 且 CLI 拒绝 `--host 0.0.0.0`**（RCE 级 API 安全限制）；要 `--port` 映射须用户手动建 `~/.dsh/cordis.patch.yml` 绑 0.0.0.0（opt-in）——**勿在镜像里默认预置 0.0.0.0 绑定**
+- **dsh web 默认绑 127.0.0.1 且 CLI 拒绝 `--host 0.0.0.0`**（RCE 级 API 安全限制）；要 `--port` 映射须用户手动建 `~/.dsh/cordis.patch.yml` 绑 0.0.0.0（opt-in）——**勿在镜像里默认预置 0.0.0.0 绑定**。**文档/帮助示例必须写 `--port 127.0.0.1:3080:3080`**：不带 IP 的 `--port 3080:3080` 宿主侧默认绑 0.0.0.0（实测 `docker port` 显示 `0.0.0.0:3080` + `[::]:3080`，Docker Desktop 还放行 Windows 防火墙「Docker Desktop Backend」规则）→ RCE 级 API 对局域网可见；加 `127.0.0.1:` 前缀后只绑 loopback，且 Docker Desktop 仍把 localhost 转发到用户终端（WSL2 实测可用）。`--net host`（仅原生 Linux）保持 dsh 默认 127.0.0.1 监听即可直达、**勿建 cordis patch**（host 模式下容器绑定=宿主绑定，0.0.0.0 会直接把 API 暴露到局域网）
 - **EXTRA_ARGS 字符串拼接**（dkagent 735 行附近）：`${AGENT_CMD} ${EXTRA_ARGS[*]:-}` 会丢参数边界——**新代码不要复用这个模式**，自己维护参数数组
 - `dkagent-sync` 镜像 `ENTRYPOINT ["rsync"]`：`docker run dkagent-sync ARG` 等价 `rsync ARG`，参数里不要再写 `rsync`
+
+## 安全意识（本项目面向安全场景，写代码与文档必须带安全思维）
+
+- 本工具运行于安全研究场景，任何对外暴露的端口都是攻击面——**示例、文档、默认配置一律采用最安全姿势**。
+- 历史教训（本仓库真实发生过）：示例曾把 RCE 级接口（dsh web）用裸 `--port 3080:3080` 发布（宿主侧默认绑 0.0.0.0，实测局域网可见，Docker Desktop 还放行 Windows 防火墙），文档甚至把「局域网机器同理」写成功能卖点；`--net host` 与 cordis 0.0.0.0 patch 混用会让容器内绑定直接变成宿主绑定。此后规则：
+  - 端口映射示例必须写 `127.0.0.1:<宿主端口>:<容器端口>`；除非刻意演示暴露给局域网，且必须同时标注风险；
+  - 未实测的结论与平台不得写进文档（如 Docker Desktop 的 macOS 行为未实测，就不要断言 macOS）；
+  - 文档中的「局域网可见」只能出现在警告语境，不得作为宣传用语；
+  - 新增示例前先自问：照这条命令敲下去，攻击面是什么。
 
 ## 文档规则
 

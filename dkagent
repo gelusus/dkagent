@@ -317,7 +317,7 @@ Options:
                          host: share the host network (--network host) — container
                          127.0.0.1 == host 127.0.0.1, so loopback-only services are
                          reachable without port mapping; --port is ignored in this mode
-                         Note: on Docker Desktop (WSL2/macOS) host mode attaches to the
+                         Note: on Docker Desktop host mode attaches to the
                          Docker VM's namespace, so localhost is NOT your terminal's
                          localhost (verified on WSL2) — use --port there instead
   --no-tmux              🔌 Disable host tmux wrapping (SSH disconnect loses the process)
@@ -355,9 +355,9 @@ Examples:
   dkagent -p slim claude                     # 🎚️ run Claude with the slim image
   dkagent --image my-custom-agent claude     # 🐳 use any custom image
   dkagent --docker-socket claude             # 🐋 docker usable inside (⚠️ highest risk)
-  dkagent --port 8080:8080 claude            # 🔌 expose a container service to the host
-  dkagent --port 3080:3080 dsh web            # 🌐 dsh Web UI → http://localhost:3080 (one-time ~/.dsh/cordis.patch.yml binding 0.0.0.0 needed, see README)
-  dkagent --net host dsh web                 # 🌐 dsh Web UI loopback access — native Linux only; unreachable on Docker Desktop (WSL2/macOS), use --port
+  dkagent --port 8080:8080 claude            # 🔌 same as docker run -p: without an IP the host side binds 0.0.0.0 (LAN-visible) — for local-only access write 127.0.0.1:8080:8080
+  dkagent --port 127.0.0.1:3080:3080 dsh web  # 🌐 dsh Web UI → http://localhost:3080 (host side bound to 127.0.0.1 only — no LAN exposure; container still needs the cordis patch binding 0.0.0.0, see README)
+  dkagent --net host dsh web                 # 🌐 dsh Web UI loopback access (keep dsh's default 127.0.0.1 bind, do NOT create the cordis patch) — native Linux only; unreachable on Docker Desktop (WSL2), use --port instead
   dkagent --net off claude                 # 🚫 run with no network at all (safest network tier)
   dkagent --tmux-name mywork claude          # 🔌 custom tmux session name
   dkagent --no-tmux claude                   # 🔌 disable tmux wrapping
@@ -401,8 +401,8 @@ Agent 名称:
                          （启动时会打印风险提示）
                          host: 共享宿主网络（--network host），容器内 127.0.0.1 即宿主
                          127.0.0.1，只绑 loopback 的服务无需端口映射直接可达；此模式 --port 被忽略
-                         注意: Docker Desktop（WSL2/macOS）下 host 模式挂到 Docker 虚拟机
-                         的命名空间，localhost 并非你终端的 localhost（WSL2 实测）——请用 --port
+                         注意: Docker Desktop 下 host 模式挂到 Docker 虚拟机的命名空间，
+                         localhost 并非你终端的 localhost（WSL2 实测）——请用 --port
   --no-tmux              🔌 禁用宿主机 tmux 包装（SSH 断线进程会丢失）
   --tmux-name NAME       🔌 自定义 tmux 会话名（默认: dkagent-<当前目录名>）
                          重名时自动加 _2、_3... 后缀；重连用 tmux attach
@@ -438,9 +438,9 @@ Agent 名称:
   dkagent -p slim claude                     # 🎚️ 使用精简镜像运行 Claude
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
   dkagent --docker-socket claude             # 🐋 容器内可用 docker（⚠️ 最高风险）
-  dkagent --port 8080:8080 claude            # 🔌 将容器内服务端口映射到宿主机
-  dkagent --port 3080:3080 dsh web            # 🌐 dsh Web UI → http://localhost:3080（首次需建 ~/.dsh/cordis.patch.yml 绑 0.0.0.0，见 README）
-  dkagent --net host dsh web                 # 🌐 dsh Web UI loopback 直达——仅原生 Linux；Docker Desktop（WSL2/macOS）下不可达，请用 --port
+  dkagent --port 8080:8080 claude            # 🔌 等价 docker run -p：不带 IP 默认绑宿主 0.0.0.0（局域网可见），仅本机访问写 127.0.0.1:8080:8080
+  dkagent --port 127.0.0.1:3080:3080 dsh web  # 🌐 dsh Web UI → http://localhost:3080（宿主侧只绑 127.0.0.1，不暴露局域网；容器内仍需 cordis patch 绑 0.0.0.0，见 README）
+  dkagent --net host dsh web                 # 🌐 dsh Web UI loopback 直达（保持 dsh 默认 127.0.0.1 监听即可，勿建 cordis patch）——仅原生 Linux；Docker Desktop（WSL2）下不可达，请改用 --port
   dkagent --net off claude                 # 🚫 完全断网运行（最安全的网络档）
   dkagent --tmux-name mywork claude          # 🔌 自定义 tmux 会话名
   dkagent --no-tmux claude                   # 🔌 禁用 tmux 包装

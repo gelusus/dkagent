@@ -255,7 +255,7 @@ dkagent claude                         # wake up Claude Code inside the containe
 dkagent -m ./a -r -m ./b agy            # multi-dir mounts, a read-only, b writable
 dkagent -p slim claude                 # switch profile
 dkagent --docker-socket claude         # docker inside the container (⚠️ equals host root)
-dkagent --port 3080:3080 dsh web        # 🌐 dsh Web UI via port mapping (one-time cordis patch binding 0.0.0.0 needed first, see "Port-mapping in action" below)
+dkagent --port 127.0.0.1:3080:3080 dsh web   # 🌐 dsh Web UI via port mapping (host side bound to 127.0.0.1 only — no LAN exposure; one-time cordis patch binding 0.0.0.0 needed first, see "Port-mapping in action" below)
 dkagent --dry-run                      # print the docker run command, don't execute
 ```
 
@@ -296,20 +296,20 @@ mkdir -p ~/.dsh && cat > ~/.dsh/cordis.patch.yml <<'EOF'
     port: 3080
 EOF
 # From then on:
-dkagent --port 3080:3080 dsh web
-# open http://localhost:3080 in your browser (same from Docker Desktop / LAN machines)
+dkagent --port 127.0.0.1:3080:3080 dsh web
+# open http://localhost:3080 in your browser; the host side is bound to 127.0.0.1 only, so LAN machines cannot reach it
 ```
 
-> ⚠️ **Security note**: Docker's `-p`/`-P` port mapping forwards traffic to the **container's eth0 IP**, so a service listening only on `127.0.0.1` inside never sees it (verified: 5/5 connection failures), and the current dsh CLI **deliberately rejects `--host 0.0.0.0`** — hence the config-layer opt-in. **Once bound to 0.0.0.0 and published, the RCE-grade Web API is visible to the LAN**; when done, close the container or delete the patch to restore loopback.
+> ⚠️ **Security note**: Docker's `-p`/`-P` port mapping forwards traffic to the **container's eth0 IP**, so a service listening only on `127.0.0.1` inside never sees it (verified: 5/5 connection failures), and the current dsh CLI **deliberately rejects `--host 0.0.0.0`** — hence the config-layer opt-in for the in-container bind. **The exposure boundary is the host-side bind address**: `--port 3080:3080` (no IP) makes docker bind the host's `0.0.0.0` (verified: `docker port` shows `0.0.0.0:3080`, and Docker Desktop punches the Windows firewall), so the RCE-grade Web API becomes visible to the LAN. **Always write `--port 127.0.0.1:3080:3080`** — loopback-only, and Docker Desktop still forwards localhost to your terminal (verified on WSL2). Binding 0.0.0.0 inside the container merely makes the service reachable for the bridge forward; it is not itself the exposure. When done, close the container or delete the patch to restore loopback.
 
-**Option 2: `--net host` (⚠️ last resort: no network isolation)**
+**Option 2: `--net host` (works on native Linux; ⚠️ no network isolation)**
 
 ```bash
 dkagent --net host dsh web
-# open http://localhost:3080 (no --port needed; docker ignores port mappings in this mode)
+# open http://localhost:3080 (no --port needed; keep dsh's default 127.0.0.1 bind, do NOT create the cordis patch)
 ```
 
-With `--network host` the container shares the host's network namespace (confirmed by the official docs), so the container's `127.0.0.1` IS the host's `127.0.0.1` — dsh's default loopback bind is directly reachable. But note: **it is far more dangerous than Option 1** — an Option-1 container can only reach the one port you published, while a host-mode container shares the host network entirely: **it can reach ALL host ports and services, and can bind host ports directly**. High risk; the script prints a risk warning at startup (see the [safety model](#safety-model-see-how-much-power-you-gave-the-agent-at-a-glance)). Avoid it when you can.
+With `--network host` the container shares the host's network namespace, so the container's `127.0.0.1` IS the host's `127.0.0.1` — **keep dsh's default loopback bind** and the Web UI is local-only: no patch, no LAN exposure. ⚠️ **Never combine this with Option 1's cordis patch (0.0.0.0)**: in host mode the container's bind IS the host's bind, so 0.0.0.0 would expose the RCE-grade API to the entire LAN directly — delete `~/.dsh/cordis.patch.yml` first. Host mode itself still has no network isolation: the container can reach ALL host ports and services, and can bind host ports directly. High risk; the script prints a risk warning at startup (see the [safety model](#safety-model-see-how-much-power-you-gave-the-agent-at-a-glance)).
 
 **Safest tier: fully offline CLI (`--net off`)**
 
@@ -319,11 +319,11 @@ dkagent --net off dsh --profile headless "run the tests"
 
 With `--network none` the container has no network interfaces at all — the internet and all host ports (including Docker Desktop's `host.docker.internal` loopback channel) are unreachable; it works purely through mounted directories. Use this tier for any task that needs no Web UI and no network.
 
-> ⚠️ **Platform note (verified)**: on WSL2 + Docker Desktop, `--network host` attaches to the **Docker VM's namespace** (docker-desktop distro, 192.168.65.x), NOT your WSL2 distro — the container's `127.0.0.1` is unreachable from your terminal (verified: all curls refused). On native Linux Docker it shares the host netns as expected. On Docker Desktop, use Option 1 (`--port`).
+> ⚠️ **Platform note (verified)**: on WSL2 + Docker Desktop, `--network host` attaches to the **Docker VM's namespace** (docker-desktop distro, 192.168.65.x), NOT your WSL2 distro — the container's `127.0.0.1` is unreachable from your terminal (verified: all curls refused, even when the container binds 127.0.0.1 only). On native Linux Docker it shares the host netns as expected. On Docker Desktop, use Option 1 (`--port 127.0.0.1:...`).
 
 Key points:
 - **API key**: after startup, enter it in the browser under Settings → Models (stored in `~/.dsh/.credentials.yaml`, persisted in the Home volume), or simply put `DEEPSEEK_API_KEY=sk-...` in `~/.config/dkagent/.env` (dkagent injects it into the container automatically)
-- **Change the port**: edit the `port` in `~/.dsh/cordis.patch.yml`, and update the `--port` mapping (Option 1) accordingly
+- **Change the port**: edit the `port` in `~/.dsh/cordis.patch.yml`, and update the `--port 127.0.0.1:...` mapping (Option 1) accordingly
 - **CLI form**: `dkagent dsh --profile headless "run the tests"` (one-shot task, exposes no port at all); interactive TUI via `dsh --profile tui`
 - Adding `-e` (ephemeral) for the Web UI works fine too — close the container and no state remains (the ephemeral Home doesn't keep the patch; recreate it each time)
 
@@ -337,7 +337,7 @@ Prefer not to use the CLI? `docker compose run --rm` works too — all three mod
 
 ## Desktop Agent connections
 
-Desktop Agents (e.g. Zhipu's ZCode) can use this environment too. ZCode can connect **directly to a running container** (no exposed ports needed): the container name is `dkagent-<project dirname>` (e.g. `dkagent-my-project`), and the user inside is `kali`. For Agents that only support SSH, use `--port` at startup to map a container service port to the host and connect directly (e.g. `dkagent --port 2222:22 claude`, given a service is listening on that port inside) — no tunnel needed.
+Desktop Agents (e.g. Zhipu's ZCode) can use this environment too. ZCode can connect **directly to a running container** (no exposed ports needed): the container name is `dkagent-<project dirname>` (e.g. `dkagent-my-project`), and the user inside is `kali`. For Agents that only support SSH, use `--port` at startup to map a container service port to the host and connect directly (e.g. `dkagent --port 127.0.0.1:2222:22 claude` — the `127.0.0.1:` prefix keeps it local-only; without it the port is visible on the LAN; a service must be listening on that port inside) — no tunnel needed.
 
 ---
 

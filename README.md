@@ -255,7 +255,7 @@ dkagent claude                         # 唤醒容器内 Claude Code
 dkagent -m ./a -r -m ./b agy            # 多目录挂载，a 只读 b 可写
 dkagent -p slim claude                 # 切换 profile
 dkagent --docker-socket claude         # 容器内可用 docker（⚠️ 等同宿主 root）
-dkagent --port 3080:3080 dsh web        # 🌐 dsh Web UI 端口映射（首次需先建 cordis patch 绑 0.0.0.0，见下文「端口映射实战」）
+dkagent --port 127.0.0.1:3080:3080 dsh web   # 🌐 dsh Web UI 端口映射（宿主侧只绑 127.0.0.1，不暴露局域网；首次需先建 cordis patch 绑 0.0.0.0，见下文「端口映射实战」）
 dkagent --dry-run                      # 只打印 docker run 命令不执行
 ```
 
@@ -295,20 +295,20 @@ mkdir -p ~/.dsh && cat > ~/.dsh/cordis.patch.yml <<'EOF'
     port: 3080
 EOF
 # 之后每次：
-dkagent --port 3080:3080 dsh web
-# 浏览器打开 http://localhost:3080 即可使用（Docker 桌面版 / 局域网机器同理）
+dkagent --port 127.0.0.1:3080:3080 dsh web
+# 浏览器打开 http://localhost:3080 即可使用；宿主侧只绑 127.0.0.1，局域网机器不可达
 ```
 
-> ⚠️ **安全提示**：docker 的 `-p`/`-P` 端口映射把流量转发到**容器 eth0 的 IP**，容器内只监听 `127.0.0.1` 的服务收不到包（实测 5/5 全拒），且当前版本 dsh 的 CLI **故意拒绝 `--host 0.0.0.0`**——所以必须经配置层放开绑定。**一旦绑 0.0.0.0 并映射端口，RCE 级 Web API 就对局域网可见**；用完建议关掉容器，或删除 patch 恢复 loopback。
+> ⚠️ **安全提示**：docker 的 `-p`/`-P` 端口映射把流量转发到**容器 eth0 的 IP**，容器内只监听 `127.0.0.1` 的服务收不到包（实测 5/5 全拒），且当前版本 dsh 的 CLI **故意拒绝 `--host 0.0.0.0`**——所以容器内的绑定必须经配置层放开。**对外暴露的边界是宿主侧的绑定地址**：写成 `--port 3080:3080`（不带 IP）时 docker 默认绑宿主的 `0.0.0.0`（实测 `docker port` 显示 `0.0.0.0:3080`，Docker Desktop 还会放行 Windows 防火墙），RCE 级 Web API 就对局域网可见；**务必写成 `--port 127.0.0.1:3080:3080`**——只有本机 loopback 可达，且 Docker Desktop（WSL2 实测）仍会把 localhost 转发到你的终端。容器内的 0.0.0.0 只是让服务在 bridge 网段内可被转发，不是对外暴露。用完建议关掉容器，或删除 patch 恢复 loopback。
 
-**方式二：`--net host` 共享宿主网络（⚠️ 最后手段：无网络隔离）**
+**方式二：`--net host` 共享宿主网络（原生 Linux 可用；⚠️ 无网络隔离）**
 
 ```bash
 dkagent --net host dsh web
-# 浏览器打开 http://localhost:3080（无需 --port；此模式下 docker 忽略端口映射）
+# 浏览器打开 http://localhost:3080（无需 --port；保持 dsh 默认 127.0.0.1 监听，勿建 cordis patch）
 ```
 
-`--network host` 下容器与宿主共享网络命名空间（官方文档确认），容器内 `127.0.0.1` 就是宿主的 `127.0.0.1`——dsh 保持默认 loopback 绑定即可直接访问。但注意：**它比方式一危险得多**——方式一的容器只能访问你映射的那一个端口，而 host 模式容器与宿主网络完全互通，**可以访问宿主机全部端口与服务，还能直接绑定宿主端口**，属高风险操作，启动时脚本会打印风险提示（见[安全模型](#安全模型一眼看懂你给了-agent-多大权限)）。能不用就不用。
+`--network host` 下容器与宿主共享网络命名空间，容器内 `127.0.0.1` 就是宿主的 `127.0.0.1`——**保持 dsh 默认的 loopback 绑定即可**，Web UI 仅本机可达、不暴露局域网，无需任何 patch。⚠️ **勿与方式一的 cordis patch（0.0.0.0）混用**：host 模式下容器绑定即宿主绑定，0.0.0.0 会把 RCE 级 API 直接暴露到整个局域网——先删除 `~/.dsh/cordis.patch.yml` 再开。另外 host 模式本身无网络隔离：容器可访问宿主机全部端口与服务、还能直接绑定宿主端口，属高风险操作，启动时脚本会打印风险提示（见[安全模型](#安全模型一眼看懂你给了-agent-多大权限)）。
 
 **最安全档：完全断网跑 CLI（`--net off`）**
 
@@ -318,11 +318,11 @@ dkagent --net off dsh --profile headless "跑一下测试"
 
 `--network none` 下容器无任何网络接口——外网、宿主端口（包括 Docker Desktop 的 `host.docker.internal` 回环通道）全部不可达，只靠挂载目录干活。不开 Web、不联网的任务建议都用这档。
 
-> ⚠️ **平台注意（实测）**：WSL2 + Docker Desktop 下 `--network host` 挂到的是 **Docker 虚拟机（docker-desktop distro，192.168.65.x）的命名空间**，不是你的 WSL2 发行版——容器内的 `127.0.0.1` 在你的终端不可达（实测 curl 全拒）。原生 Linux Docker 上则正常共享宿主 netns。Docker Desktop 环境请用方式一 `--port`。
+> ⚠️ **平台注意（实测）**：WSL2 + Docker Desktop 下 `--network host` 挂到的是 **Docker 虚拟机（docker-desktop distro，192.168.65.x）的命名空间**，不是你的 WSL2 发行版——容器内的 `127.0.0.1` 在你的终端不可达（实测 curl 全拒，即使容器只绑 127.0.0.1 也一样）。原生 Linux Docker 上则正常共享宿主 netns。Docker Desktop 环境请用方式一 `--port 127.0.0.1:...`。
 
 要点：
 - **API Key**：启动后浏览器里 Settings → Models 填入（存 `~/.dsh/.credentials.yaml`，随 Home 卷持久化），或直接写进 `~/.config/dkagent/.env`（`DEEPSEEK_API_KEY=sk-...`，dkagent 自动注入容器）
-- **换端口**：改 `~/.dsh/cordis.patch.yml` 里的 `port`，与 `--port` 映射（方式一）一起改
+- **换端口**：改 `~/.dsh/cordis.patch.yml` 里的 `port`，与 `--port 127.0.0.1:...` 映射（方式一）一起改
 - **CLI 形式**：`dkagent dsh --profile headless "跑一下测试"`（一次性任务，完全不暴露端口）；交互 TUI 用 `dsh --profile tui`
 - 加 `-e`（用完即焚）跑 Web UI 也完全没问题，关掉容器不留任何状态（临时 Home 不保留 patch，需每次重建）
 
@@ -336,7 +336,7 @@ dkagent --net off dsh --profile headless "跑一下测试"
 
 ## 桌面端 Agent 连接
 
-桌面端 Agent（如智谱 ZCode）同样可以用这个环境。ZCode 支持**直连运行中的容器**（无需开放端口）：容器名即 `dkagent-<项目目录名>`（如 `dkagent-my-project`），容器内用户 `kali`。仅支持 SSH 的 Agent，可在启动时用 `--port` 把容器内服务端口映射到宿主机后直接连接（如 `dkagent --port 2222:22 claude`，容器内需有对应服务在监听），无需隧道。
+桌面端 Agent（如智谱 ZCode）同样可以用这个环境。ZCode 支持**直连运行中的容器**（无需开放端口）：容器名即 `dkagent-<项目目录名>`（如 `dkagent-my-project`），容器内用户 `kali`。仅支持 SSH 的 Agent，可在启动时用 `--port` 把容器内服务端口映射到宿主机后直接连接（如 `dkagent --port 127.0.0.1:2222:22 claude`——加 `127.0.0.1:` 前缀只本机可达，不带 IP 则局域网可见；容器内需有对应服务在监听），无需隧道。
 
 ---
 
