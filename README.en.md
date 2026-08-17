@@ -230,10 +230,10 @@ dkagent sync push laptop --dry-run           # preview only, no changes
 dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # pass through rsync args
 ```
 
-**Default behavior**: syncs both the persistent volume and the current project dir by default; the volume uses **container-nested** rsync over ssh, dirs use **direct** rsync (faster). Default flags: `-az --delete --numeric-ids --partial --partial-dir=.rsync-partial`, ssh keepalive, and 10 built-in retries (30 s apart).
+**Default behavior**: syncs both the persistent volume and the current project dir by default; the volume uses **container-nested** rsync over ssh, dirs use **direct** rsync (faster). Default flags: `-az --numeric-ids --partial --partial-dir=.rsync-partial` (same as rsync's own default: remote-only files are **not** deleted; pass `-- --delete` explicitly for mirroring), ssh keepalive, and 10 built-in retries (30 s apart).
 
-> [!CAUTION]
-> **`--delete` is on by default**: files only present on the remote are deleted to keep a mirror. Strongly recommend `--dry-run` before the first sync to see what would be deleted — watch out for `.env` API keys and `.git/` history.
+> [!NOTE]
+> **`--delete` is off by default**: consistent with rsync's native default, files only present on the remote are kept. For a true mirror, pass `dkagent sync push <peer> -- --delete` explicitly — and strongly recommend a `--dry-run` first to see what would be deleted, especially `.env` API keys and `.git/` history.
 
 **Options at a glance**: `--remote-path PATH` / `--no-volume` / `--no-project` / `--dry-run` / `-y` / `--retries N` / `-- RSYNC_ARGS` (see `dkagent sync --help`).
 

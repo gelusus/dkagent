@@ -162,7 +162,7 @@ declare -A MSG_ZH=(
     [sync_dir_pushing]="📁 同步项目目录 %s → %s:%s"
     [sync_dir_pulling]="📁 同步项目目录 %s ← %s:%s"
     [sync_dryrun_intro]="🔍 Dry-run 预览（不实际执行）:"
-    [sync_confirm_prompt]="⚠️  确认执行实际同步？（--delete 默认开启，远端独有文件会被删除，建议首次先 --dry-run 检查）[y/N] "
+    [sync_confirm_prompt]="⚠️  确认执行实际同步？（--delete 默认关闭，远端独有文件不会被删除；如需镜像一致请透传 -- --delete，并用 --dry-run 预检）[y/N] "
     [sync_aborted]="ℹ️  已取消"
     [sync_done]="🎉 同步完成"
     [sync_no_volume_no_project]="❌ 错误: --no-volume 和 --no-project 不能同时使用（无任何同步目标）"
@@ -246,7 +246,7 @@ declare -A MSG_EN=(
     [sync_dir_pushing]="📁 Syncing project dir %s → %s:%s"
     [sync_dir_pulling]="📁 Syncing project dir %s ← %s:%s"
     [sync_dryrun_intro]="🔍 Dry-run preview (no actual changes):"
-    [sync_confirm_prompt]="⚠️  Proceed with sync? (--delete is ON by default, remote-only files will be removed. Consider --dry-run first) [y/N] "
+    [sync_confirm_prompt]="⚠️  Proceed with sync? (--delete is OFF by default; remote-only files are kept. Pass -- --delete for mirroring, and preview with --dry-run first) [y/N] "
     [sync_aborted]="ℹ️  Aborted"
     [sync_done]="🎉 Sync complete"
     [sync_no_volume_no_project]="❌ Error: --no-volume and --no-project cannot be used together (nothing to sync)"
@@ -472,7 +472,7 @@ Options:
   --yes / -y            Skip dry-run preview and confirmation
   --dry-run             Dry-run only, do not actually sync
   --retries N           Max retry attempts (default: 10)
-  -- RSYNC_ARGS...      Pass-through to rsync (e.g. -- --exclude=.git/)
+  -- RSYNC_ARGS...      Pass-through to rsync (e.g. -- --exclude=.git/; deletion needs an explicit --delete)
 
 Config files (manually editable):
   ~/.config/dkagent/peers           alias=ssh://user@host:port
@@ -509,7 +509,7 @@ dkagent sync - 多机接力同步（纯手动，绝不自动耦合）
   --yes / -y            跳过 dry-run 预览和确认
   --dry-run             仅预览，不实际同步
   --retries N           最大重试次数（默认: 10）
-  -- RSYNC_ARGS...      透传给 rsync（如 -- --exclude=.git/）
+  -- RSYNC_ARGS...      透传给 rsync（如 -- --exclude=.git/；删除需显式 --delete）
 
 配置文件（可手动 vi 编辑）:
   ~/.config/dkagent/peers           alias=ssh://user@host:port
@@ -735,7 +735,8 @@ sync_volume() {
     shift 8
     local extra_args=("$@")  # 用户经 -- 透传的 rsync 附加参数
     local ssh_opts="-p ${port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
-    local base_args=(-az --delete --numeric-ids --partial --partial-dir=.rsync-partial --stats)
+    # 与 rsync 原生默认一致：不删远端独有文件；需要镜像一致时由用户经 -- 显式透传 --delete
+    local base_args=(-az --numeric-ids --partial --partial-dir=.rsync-partial --stats)
     if [[ "$dry" == true ]]; then
         base_args+=(--dry-run -i)
         retries=1  # dry-run 不重试，断了直接报错
@@ -810,7 +811,8 @@ sync_dir() {
     shift 8
     local extra_args=("$@")  # 用户经 -- 透传的 rsync 附加参数
     local ssh_opts="-p ${port} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=30 -o ServerAliveInterval=30 -o ServerAliveCountMax=20"
-    local base_args=(-az --delete --numeric-ids --partial --partial-dir=.rsync-partial --stats)
+    # 与 rsync 原生默认一致：不删远端独有文件；需要镜像一致时由用户经 -- 显式透传 --delete
+    local base_args=(-az --numeric-ids --partial --partial-dir=.rsync-partial --stats)
     if [[ "$dry" == true ]]; then
         base_args+=(--dry-run -i)
         retries=1

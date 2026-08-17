@@ -230,10 +230,10 @@ dkagent sync push laptop --dry-run         # 仅预览不实跑
 dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # 透传 rsync 参数
 ```
 
-**默认行为**：默认同时同步持久化卷 + 当前项目目录；卷走**容器嵌套** rsync over ssh，目录走**直连** rsync（更快）。默认 flags：`-az --delete --numeric-ids --partial --partial-dir=.rsync-partial`，ssh keepalive + 内置 10 次重试（间隔 30 秒）。
+**默认行为**：默认同时同步持久化卷 + 当前项目目录；卷走**容器嵌套** rsync over ssh，目录走**直连** rsync（更快）。默认 flags：`-az --numeric-ids --partial --partial-dir=.rsync-partial`（与 rsync 原生默认一致，**不删**远端独有文件；需镜像一致时显式透传 `-- --delete`），ssh keepalive + 内置 10 次重试（间隔 30 秒）。
 
-> [!CAUTION]
-> **`--delete` 默认开启**：远端独有的文件会被删除以维持镜像一致。首次同步前强烈建议 `--dry-run` 看会删什么——特别留意 `.env` API keys 与 `.git/` 历史。
+> [!NOTE]
+> **`--delete` 默认关闭**：与 rsync 原生默认一致，远端独有文件不会被删除。需要镜像一致时显式 `dkagent sync push <peer> -- --delete`，并强烈建议先 `--dry-run` 看会删什么——特别留意 `.env` API keys 与 `.git/` 历史。
 
 **选项速查**：`--remote-path PATH` / `--no-volume` / `--no-project` / `--dry-run` / `-y` / `--retries N` / `-- RSYNC_ARGS`（详见 `dkagent sync --help`）。
 

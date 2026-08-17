@@ -30,7 +30,7 @@ dkagent sync --help      # sync 子命令帮助
 - **单脚本无框架**：没有 getopts，参数解析是手写 `while + case`。**新子命令（如 `sync`）必须在主参数解析 while 循环之前加前置路由**，否则会被 tmux 块（`exec tmux new-session`）包装或被当作 AGENT_CMD 吞掉。
 - **i18n 双表必须同步**：文案加在 `MSG_ZH` 和 `MSG_EN` 两个关联数组（key 完全对齐），调用 `msg <key> [args...]`。install.sh 有独立副本。
 - **配置读取模式**：多路径搜索数组（`ENV_SEARCH_PATHS` / `PROFILE_CONF_PATHS` / `SYNC_PEERS_PATHS`）+ 逐行解析函数。新增配置文件仿照 `load_custom_profiles`。**⚠️ 脚本目录回退已移除**（防 repo 被种植 `.env`/`profiles`/`peers` 劫持后续运行）——搜索路径只含 `$HOME/.config/dkagent/` 与 `$DKAGENT_ENV`。
-- **sync 子命令设计原则**：完全手动、绝不与 docker run/tmux 耦合；遵循 rsync 哲学（不设默认 exclude/backup）；默认 dry-run 预览 + 用户确认；内置重试循环 + `--partial` 断点续传。
+- **sync 子命令设计原则**：完全手动、绝不与 docker run/tmux 耦合；遵循 rsync 哲学（不设默认 exclude/backup/--delete，删除需显式 `-- --delete` 透传）；默认 dry-run 预览 + 用户确认；内置重试循环 + `--partial` 断点续传。
 - **容器名/tmux 会话名**：默认 `dkagent-<basename($PWD)>`，重名自动加 `_2` `_3` 后缀；特殊字符替换为 `_`。escape hatch 用环境变量（`DKAGENT_NO_CONTAINER_NAME=1` 等）。
 - **安全**：peers 配置含 SSH URL 要 `chmod 600`（运行时会 stat 告警）；peer URL 的 port 必须校验为纯数字，**user/host/远端路径必须过字符白名单**（user/host `[A-Za-z0-9._-]`；路径 `[A-Za-z0-9/._~-]` + 全部非 ASCII 字节 0x80-0xFF，即放行中文等 UTF-8 多字节字符——shell 元字符/控制字符均为 ASCII，放行高字节不扩大注入面，防经 rsync 远端 shell 注入）；`dkagent-sync` 镜像指纹存 `~/.config/dkagent/sync-image.id`，替换即拒（`check_sync_image`）；sync 容器内只挂 `ssh -G` 解析出的身份文件或 SSH agent socket，**勿整目录挂 `~/.ssh`**；环境变量一律经临时 `--env-file`（0600 用后即删）传递，dry-run 默认打码（`DKAGENT_DRY_RUN_SHOW_SECRETS=1` 显明文）。
 
