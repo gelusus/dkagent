@@ -239,7 +239,7 @@ dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # pass through rsyn
 
 **Config files**: `~/.config/dkagent/peers` (peer list), `~/.config/dkagent/sync-mapping` (path mapping; auto-managed by the script, but editable by hand).
 
-**Security constraints**: peer user/host and remote paths may only contain alphanumerics and `. _ - / ~` (no spaces — prevents injection via the rsync remote shell); a peers file whose mode is not 600 triggers a warning; the first volume sync records the `dkagent-sync` image fingerprint (`~/.config/dkagent/sync-image.id`) and **refuses to run** if the image is ever replaced — delete that file to re-trust after a deliberate rebuild; the container only mounts the identity files your local ssh would actually use (resolved via `ssh -G`) or the SSH agent socket — the whole `~/.ssh` directory is no longer mounted.
+**Security constraints**: peer user/host may only contain alphanumerics and `. _ -`; remote paths allow alphanumerics, `. _ - / ~`, and non-ASCII characters such as CJK, but still no spaces or shell metacharacters (prevents injection via the rsync remote shell — shell metacharacters are all ASCII, so allowing non-ASCII bytes does not widen the attack surface); a peers file whose mode is not 600 triggers a warning; the first volume sync records the `dkagent-sync` image fingerprint (`~/.config/dkagent/sync-image.id`) and **refuses to run** if the image is ever replaced — delete that file to re-trust after a deliberate rebuild; the container only mounts the identity files your local ssh would actually use (resolved via `ssh -G`) or the SSH agent socket — the whole `~/.ssh` directory is no longer mounted.
 
 ---
 

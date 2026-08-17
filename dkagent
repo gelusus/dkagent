@@ -136,7 +136,7 @@ declare -A MSG_ZH=(
     [dry_run_env_masked]="🔒 环境变量经临时 --env-file 传递（0600、用后即删，宿主 ps 不可见），dry-run 已打码。设置 DKAGENT_DRY_RUN_SHOW_SECRETS=1 显示明文:"
     [dry_run_env_plain]="🔓 环境变量明文（DKAGENT_DRY_RUN_SHOW_SECRETS=1）:"
     [err_sync_bad_ident]="❌ 错误: peer URL 的用户名/主机含非法字符: %s（仅允许字母数字与 . _ -）"
-    [err_sync_bad_path]="❌ 错误: 远端路径含非法字符（仅允许字母数字与 / . ~ _ -，不支持空格）: %s"
+    [err_sync_bad_path]="❌ 错误: 远端路径含非法字符（允许字母数字、/ . ~ _ - 与中文等非 ASCII 字符，不支持空格与 shell 元字符）: %s"
     [warn_sync_peers_perm]="⚠️  警告: peers 文件 %s 权限为 %s（含 SSH 地址，建议 chmod 600）"
     [sync_image_pinned]="🔒 已记录同步镜像指纹 %s...（镜像被替换时将拒绝同步）"
     [err_sync_image_changed]="❌ 错误: dkagent-sync 镜像与首次记录的指纹不一致，可能被替换！为保护 SSH 凭据，已拒绝同步。"
@@ -220,7 +220,7 @@ declare -A MSG_EN=(
     [dry_run_env_masked]="🔒 Env vars are passed via a temporary --env-file (0600, deleted after use; invisible to host ps) and masked in dry-run. Set DKAGENT_DRY_RUN_SHOW_SECRETS=1 to reveal:"
     [dry_run_env_plain]="🔓 Env vars in plain text (DKAGENT_DRY_RUN_SHOW_SECRETS=1):"
     [err_sync_bad_ident]="❌ Error: peer URL user/host contains illegal characters: %s (only alphanumerics and . _ - are allowed)"
-    [err_sync_bad_path]="❌ Error: remote path contains illegal characters (only alphanumerics and / . ~ _ -; spaces unsupported): %s"
+    [err_sync_bad_path]="❌ Error: remote path contains illegal characters (allowed: alphanumerics, / . ~ _ -, and non-ASCII such as CJK; spaces and shell metacharacters are not): %s"
     [warn_sync_peers_perm]="⚠️  Warning: peers file %s has mode %s (it contains SSH URLs; chmod 600 recommended)"
     [sync_image_pinned]="🔒 Sync image fingerprint recorded: %s... (sync is refused if the image is ever replaced)"
     [err_sync_image_changed]="❌ Error: the dkagent-sync image fingerprint differs from the first recorded one — it may have been replaced! Sync refused to protect your SSH credentials."
@@ -466,6 +466,7 @@ Subcommands:
 
 Options:
   --remote-path PATH    Specify remote project dir (first run); saved to mapping
+                        (non-ASCII such as CJK is fine; spaces are not)
   --no-volume           Skip persistent volume sync
   --no-project          Skip current project dir sync
   --yes / -y            Skip dry-run preview and confirmation
@@ -502,6 +503,7 @@ dkagent sync - 多机接力同步（纯手动，绝不自动耦合）
 
 选项:
   --remote-path PATH    指定远端项目目录路径（首次必填，自动存入映射）
+                        （支持中文等非 ASCII 字符，不支持空格）
   --no-volume           跳过持久化卷同步
   --no-project          跳过当前项目目录同步
   --yes / -y            跳过 dry-run 预览和确认
@@ -658,8 +660,13 @@ parse_ssh_url() {
 }
 
 # 校验远端路径（rsync 的 user@host:path 会交给远端 shell 解析，空格/元字符是注入面，白名单拒绝）
+# 白名单 = 安全 ASCII（字母数字与 / . ~ _ -）+ 全部非 ASCII 字节（0x80-0xFF，涵盖 UTF-8 中文等多字节字符）：
+# shell 控制字符/元字符均为 ASCII，放行高字节不扩大注入面；TAB/换行属控制字符仍被拒（映射表为 TSV 格式）
 validate_sync_remote_path() {
-    [[ -n "$1" && "$1" =~ ^[A-Za-z0-9/._~-]+$ ]]
+    local p="$1" LC_ALL=C
+    # bash 正则按当前 locale 解释，强制 C locale 才能对高字节区间按字节匹配；模式用 $'...' 保持源码纯 ASCII
+    local re=$'^[A-Za-z0-9/._~\x80-\xff-]+$'
+    [[ -n "$p" && "$p" =~ $re ]]
 }
 
 # 查找当前目录到 peer 的映射，输出 remote-path，找不到返回 1
@@ -948,7 +955,8 @@ dkagent_sync_xfer() {
             skip_project=true
         fi
         # 安全校验：远端路径字符白名单（--remote-path 与映射表文件统一把关，
-        # 经 rsync 远端 shell 传递，拒绝空格与元字符；必须在 save_sync_mapping 之前）
+        # 经 rsync 远端 shell 传递，拒绝空格与元字符；中文等非 ASCII 字节放行，见 validate_sync_remote_path；
+        # 必须在 save_sync_mapping 之前）
         if [[ "$skip_project" == false ]] && ! validate_sync_remote_path "$remote_dir"; then
             msg err_sync_bad_path "$remote_dir" >&2
             exit 1

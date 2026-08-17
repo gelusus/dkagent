@@ -239,7 +239,7 @@ dkagent sync push laptop -- --exclude=.git/ --exclude=.env   # 透传 rsync 参�
 
 **配置文件**：`~/.config/dkagent/peers`（peer 列表）、`~/.config/dkagent/sync-mapping`（项目路径映射，脚本自动管理，也可 vi 编辑）。
 
-**安全约束**：peer 用户名/主机与远端路径仅允许字母数字及 `. _ - / ~`（不支持空格，防经 rsync 远端 shell 注入）；peers 文件权限非 600 时运行会告警；首次卷同步会记录 `dkagent-sync` 镜像指纹（`~/.config/dkagent/sync-image.id`），镜像被替换时**拒绝执行**——确为本人重建镜像时删除该文件即可重新信任；容器内只挂载本机 ssh 实际会用到的身份文件（经 `ssh -G` 解析）或 SSH agent socket，不再整目录挂载 `~/.ssh`。
+**安全约束**：peer 用户名/主机仅允许字母数字及 `. _ -`；远端路径允许字母数字、`. _ - / ~` 及中文等非 ASCII 字符，但仍不支持空格与 shell 元字符（防经 rsync 远端 shell 注入——shell 元字符均为 ASCII，放行非 ASCII 字节不扩大攻击面）；peers 文件权限非 600 时运行会告警；首次卷同步会记录 `dkagent-sync` 镜像指纹（`~/.config/dkagent/sync-image.id`），镜像被替换时**拒绝执行**——确为本人重建镜像时删除该文件即可重新信任；容器内只挂载本机 ssh 实际会用到的身份文件（经 `ssh -G` 解析）或 SSH agent socket，不再整目录挂载 `~/.ssh`。
 
 ---
 
