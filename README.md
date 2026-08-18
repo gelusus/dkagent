@@ -192,6 +192,8 @@ tmux attach -t dkagent-project-a   # 接回原会话（再跑 dkagent 会新建 
 
 每次运行新建独立 session（重名自动加 `_2`、`_3` 后缀）；容器默认命名 `dkagent-<目录名>`，方便 `docker ps` 识别。可用 `--tmux-name NAME` 自定义会话名、`--no-tmux` 关闭包装；`DKAGENT_NO_CONTAINER_NAME=1` 禁用容器命名（回到 Docker 随机名）。
 
+Agent 退出时 pane 会先停留片刻（无论报错还是正常结束——报错会显示退出码），避免退出前的输出随 pane 销毁一闪而过。按回车立即关闭，默认 10 秒后自动关闭；`DKAGENT_EXIT_HOLD_SECS` 可调时长，设 `0` 禁用停留。
+
 ---
 
 ## 出门在外：远程连家里电脑
@@ -265,7 +267,7 @@ dkagent --dry-run                      # 只打印 docker run 命令不执行
 | `--image NAME` | 直接指定任意 Docker 镜像（优先级最高） |
 | `-e, --ephemeral` | 临时 Home 目录，退出不留痕 |
 | `-m, --mount DIR` / `-r` | 挂载目录（可多次）；紧跟的 `-r` 将其设为只读 |
-| `--no-mount` | 不挂载任何宿主机目录（最安全） |
+| `--no-mount` | 不挂载任何宿主机目录，持久化 home 卷保留（配 `-e` 才完全隔离） |
 | `--docker-socket` | 挂载宿主 docker.sock（⚠️ **最高风险，等同宿主 root**） |
 | `--port HOST:CONTAINER` | 端口映射（可重复，等价 `docker run -p`），如 `8080:8080`、`127.0.0.1:3000:3000`、`9000:9000/udp` |
 | `--net MODE` | 网络模式（默认 bridge）：`off` 完全断网（`--network none`，无任何网络接口，外网/宿主端口全不可达，最安全）；`host` 共享宿主网络（`--network host`），⚠️ 无网络隔离、启动时打印风险提示；两种模式 `--port` 均无效 |

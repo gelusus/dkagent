@@ -192,6 +192,8 @@ tmux attach -t dkagent-project-a   # resume the session (running dkagent again c
 
 Each run creates a fresh independent session (auto-suffixed `_2`, `_3` on name collisions); containers are named `dkagent-<dirname>` for easy `docker ps` identification. Customize with `--tmux-name NAME`, disable with `--no-tmux`; `DKAGENT_NO_CONTAINER_NAME=1` falls back to Docker random names.
 
+When the Agent exits, the pane holds for a moment — whether it errored (the exit code is shown) or finished normally — so the last output isn't lost as the pane is destroyed. Press Enter to close immediately, or it auto-closes after 10 s by default; `DKAGENT_EXIT_HOLD_SECS` adjusts the timeout (`0` disables the hold).
+
 ---
 
 ## Out and about: reaching your home computer remotely
@@ -265,7 +267,7 @@ dkagent --dry-run                      # print the docker run command, don't exe
 | `--image NAME` | any Docker image directly (highest priority) |
 | `-e, --ephemeral` | ephemeral Home, no trace on exit |
 | `-m, --mount DIR` / `-r` | mount a dir (repeatable); a trailing `-r` makes it read-only |
-| `--no-mount` | mount nothing from the host (safest) |
+| `--no-mount` | mounts no host directories; persistent home volume kept (add `-e` for full isolation) |
 | `--docker-socket` | mount host docker.sock (⚠️ **highest risk, equals host root**) |
 | `--port HOST:CONTAINER` | port mapping (repeatable, same as `docker run -p`), e.g. `8080:8080`, `127.0.0.1:3000:3000`, `9000:9000/udp` |
 | `--net MODE` | network mode (default: bridge): `off` = no network at all (`--network none`; no network interfaces, internet and host ports unreachable — safest); `host` = share the host network (`--network host`), ⚠️ no isolation, risk warning printed at startup; `--port` has no effect in either mode |

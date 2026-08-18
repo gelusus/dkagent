@@ -9,7 +9,7 @@
 #   dkagent -m ./project claude       # 🟡 沙盒模式，挂载指定目录并运行
 #   dkagent -m "./a ./b" claude       # 🟠 多目录挂载（全部可写），启动 Claude
 #   dkagent -m "./a ./b" -r -r claude # 🟡 多目录只读挂载，启动 Claude
-#   dkagent --no-mount                # 🟢 纯配置管理模式，不挂载任何工作目录
+#   dkagent --no-mount                # 🟢 纯配置管理模式，不挂载任何宿主工作目录（home 卷保留）
 #   dkagent --help                    # 查看详细帮助及安全指南
 #
 
@@ -128,6 +128,8 @@ declare -A MSG_ZH=(
     [tmux_wrapping]="🔌 已创建 tmux 会话 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_wrapping_renamed]="🔌 会话名 '%s' 已被占用，改用 '%s'（SSH 断线后手动重连: \`tmux attach -t %s\`）"
     [tmux_no_tmux]="ℹ️  --no-tmux 已禁用宿主机 tmux 包装（SSH 断线进程会丢失）"
+    [exit_hold_prompt]="⏸️  命令异常退出（退出码 %s）。按回车立即关闭，%s 秒后自动关闭"
+    [exit_hold_done]="⏸️  命令正常退出。按回车立即关闭，%s 秒后自动关闭"
     [err_port_invalid]="❌ 错误: 无效的端口映射: %s（格式: [宿主IP:]宿主端口:容器端口[/tcp|/udp]，如 8080:8080 或 127.0.0.1:3000:3000）"
     [err_net_mode_invalid]="❌ 错误: 无效的网络模式: %s（目前仅支持 --net host / --net off）"
     [warn_net_host_risk]="⚠️ 风险提示: --net host 无网络隔离——容器与宿主共享同一网络命名空间，容器内端口即宿主端口、并可任意访问宿主机全部端口与服务。仅在你完全信任容器内程序时使用！"
@@ -212,6 +214,8 @@ declare -A MSG_EN=(
     [tmux_wrapping]="🔌 Created tmux session '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_wrapping_renamed]="🔌 Session name '%s' taken, using '%s' (SSH reconnect manually: \`tmux attach -t %s\`)"
     [tmux_no_tmux]="ℹ️  --no-tmux: host tmux wrapping disabled (SSH disconnect loses the process)"
+    [exit_hold_prompt]="⏸️  Command exited with an error (code %s). Press Enter to close now, or auto-close in %s s"
+    [exit_hold_done]="⏸️  Command finished (exit code 0). Press Enter to close now, or auto-close in %s s"
     [err_port_invalid]="❌ Error: Invalid port mapping: %s (format: [HOST_IP:]HOST_PORT:CONTAINER_PORT[/tcp|/udp], e.g. 8080:8080 or 127.0.0.1:3000:3000)"
     [err_net_mode_invalid]="❌ Error: Invalid network mode: %s (currently only --net host / --net off are supported)"
     [warn_net_host_risk]="⚠️ Risk: --net host has NO network isolation — the container shares the host network namespace; its ports are host ports and it can reach ALL host ports and services. Use only when you fully trust what runs inside!"
@@ -303,7 +307,7 @@ Options:
                          Repeatable: -m ./a -m ./b
                          Space-separated: -m "./a ./b"
   -r, --readonly         🔒 Place right after -m to mount that dir read-only
-  --no-mount             🟢 Mount nothing (cannot touch host files at all, safest)
+  --no-mount             🟢 Mount no host workdirs (container cannot touch host files; persistent home volume kept — add -e for full isolation)
   --docker-socket        🐋 Mount host docker.sock so the container can run docker
                          ⚠️ Highest risk: equivalent to handing host root to the container
   --port HOST:CONTAINER  🔌 Publish a container port to the host (docker -p semantics)
@@ -350,7 +354,7 @@ Examples:
   dkagent -e claude                          # 🧊 ephemeral home + mount cwd
   dkagent -m ./project-a -m ./project-b      # mount multiple dirs
   dkagent -m ./original -r -m ./copy claude  # original read-only, copy writable
-  dkagent --no-mount                         # 🟢 mount nothing
+  dkagent --no-mount                         # 🟢 mount no host workdirs (home volume kept)
   dkagent --env ~/custom.env                 # use a custom .env file
   dkagent -p slim claude                     # 🎚️ run Claude with the slim image
   dkagent --image my-custom-agent claude     # 🐳 use any custom image
@@ -388,7 +392,7 @@ Agent 名称:
                          支持多次指定: -m ./a -m ./b
                          支持空格分隔: -m "./a ./b"
   -r, --readonly         🔒 紧跟 -m 之后使用，将前一个 -m 目录以只读方式挂载
-  --no-mount             🟢 不挂载任何工作目录（完全无法触碰宿主机文件，最安全）
+  --no-mount             🟢 不挂载任何宿主工作目录（容器无法触碰宿主文件；持久化 home 卷保留，配 -e 才完全隔离）
   --docker-socket        🐋 挂载宿主 docker.sock，让容器内可运行 docker 命令
                          ⚠️ 最高风险：等同把宿主机 root 权限交给容器
   --port HOST:CONTAINER  🔌 端口映射（等价 docker run -p，可重复指定）
@@ -433,7 +437,7 @@ Agent 名称:
   dkagent -e claude                          # 🧊 临时 home + 挂载当前目录
   dkagent -m ./project-a -m ./project-b      # 挂载多个目录
   dkagent -m ./original -r -m ./copy claude  # 原始目录只读，副本可读写
-  dkagent --no-mount                         # 🟢 不挂载任何目录
+  dkagent --no-mount                         # 🟢 不挂载任何宿主工作目录（home 卷保留）
   dkagent --env ~/custom.env                 # 使用自定义的 .env 配置文件
   dkagent -p slim claude                     # 🎚️ 使用精简镜像运行 Claude
   dkagent --image my-custom-agent claude     # 🐳 使用任意自定义镜像
@@ -1596,5 +1600,16 @@ fi
 
 msg starting
 # 不用 exec 替换进程：docker 作为子进程运行，结束后走 EXIT trap 清理 --env-file 临时文件
-"${DOCKER_ARGS[@]}"
-exit $?
+rc=0
+"${DOCKER_ARGS[@]}" || rc=$?
+# tmux pane 主进程场景（外层 exec tmux 重入时注入 DKAGENT_TMUX_GUARD=1）：退出后一律停留片刻，
+# 否则本进程一退 pane 即销毁，退出前的输出（报错信息或正常收尾）一闪而过；回车立即关，超时自动关
+if [[ -n "${DKAGENT_TMUX_GUARD:-}" && "${DKAGENT_EXIT_HOLD_SECS:-10}" != "0" ]]; then
+    if [[ "$rc" -eq 0 ]]; then
+        msg exit_hold_done "${DKAGENT_EXIT_HOLD_SECS:-10}"
+    else
+        msg exit_hold_prompt "$rc" "${DKAGENT_EXIT_HOLD_SECS:-10}"
+    fi
+    read -r -t "${DKAGENT_EXIT_HOLD_SECS:-10}" || true
+fi
+exit "$rc"
